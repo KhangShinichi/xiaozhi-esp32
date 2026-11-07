@@ -1,0 +1,33 @@
+name: LTKK - Build firmware
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "main/boards/ltkk-esp32s3-2.8/**"
+      - ".github/workflows/ltkk-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v6.1
+    steps:
+      - name: Lay ma nguon
+        uses: actions/checkout@v4
+
+      - name: Build firmware LTKK (tieng Viet)
+        shell: bash
+        run: |
+          source "$IDF_PATH/export.sh"
+          python scripts/build.py ltkk-esp32s3-2.8 --language vi-VN
+
+      - name: Tai firmware ve
+        uses: actions/upload-artifact@v4
+        with:
+          name: ltkk-xiaozhi-firmware
+          path: build/merged-binary.bin
+          if-no-files-found: error
