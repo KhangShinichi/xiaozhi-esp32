@@ -1,0 +1,9 @@
+{
+    "type": "ltkk-esp32s3-2.8",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "ltkk-esp32s3-2.8"
+        }
+    ]
+}
