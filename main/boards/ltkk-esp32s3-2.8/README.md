@@ -11,11 +11,21 @@ Board này dùng chung sơ đồ chân với `freenove-esp32s3-display-2.8-lcd`.
 - Codec ES8311 + ampli FM8002E, micro MEMS
 - LED RGB IO42, nút BOOT IO0, đo pin IO9
 
-## Giao diện LTKK
+## Giao diện Lu - LTKK
 - Màn hình chào: logo LTKK + "Học để làm", 2,5 giây (`ltkk_brand.h`)
-- Giao diện tối (mặc định): nền navy có mạch điện, bong bóng chat xanh / cam
-- Giao diện sáng: nền trắng xanh, chữ navy
-- Đổi màu / tắt màn hình chào: sửa `ltkk_brand.h`
+- Khuôn mặt Lu: đôi mắt robot xanh ngọc, 10 biểu cảm, tự chớp mắt (`ltkk_display.cc`)
+- Màn hình chờ: đồng hồ lớn, thứ/ngày, gợi ý "Nói Hi ESP hoặc chạm để gọi Lu"
+- Đang nghe: sóng âm cam/xanh + "Lu đang nghe nè…"
+- Hẹn giờ học: vòng đếm ngược trên màn hình chờ, báo chuông khi hết giờ
+- Giao diện tối (mặc định): nền navy có mạch điện; giao diện sáng: nền trắng xanh
+- Ảnh giao diện sinh tự động: `ltkk_ui_images.c` (đôi mắt, chữ số, chữ tiếng Việt)
+
+## Ra lệnh bằng giọng nói (MCP)
+- "Hẹn giờ học 25 phút" / "Nhắc mình sau 10 phút"
+- "Thêm 5 phút nữa"
+- "Còn bao lâu nữa?"
+- "Huỷ hẹn giờ"
+- "Chuyển sang giao diện sáng / tối", "Tăng độ sáng màn hình", "Giảm âm lượng"
 
 ## Thao tác
 - Chạm 1 lần: bắt đầu / dừng trò chuyện

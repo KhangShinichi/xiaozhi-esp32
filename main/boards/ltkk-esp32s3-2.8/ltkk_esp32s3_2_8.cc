@@ -27,6 +27,7 @@
 #include "system_reset.h"
 #include "esp_lcd_ili9341.h"
 #include "ltkk_brand.h"
+#include "ltkk_display.h"
 
 #define TAG "LtkkEsp32S3"
 
@@ -68,7 +69,7 @@ private:
 class LtkkEsp32S3Display : public WifiBoard {
 private:
     Button boot_button_;
-    LcdDisplay *display_;
+    LtkkDisplay* display_;
     i2c_master_bus_handle_t codec_i2c_bus_;
     TouchDriver touch_;
     AdcBatteryMonitor* adc_battery_monitor_;
@@ -195,7 +196,7 @@ private:
         esp_lcd_panel_invert_color(panel, DISPLAY_INVERT_COLOR);
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
-        display_ = new SpiLcdDisplay(panel_io, panel,
+        display_ = new LtkkDisplay(panel_io, panel,
             DISPLAY_WIDTH, DISPLAY_HEIGHT,
             DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y,
             DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
@@ -205,7 +206,40 @@ private:
         ltkk::ShowSplash(display_);
     }
 
+    // Công cụ để Lu tự gọi khi bạn nói (MCP)
     void InitializeTools() {
+        auto& mcp = McpServer::GetInstance();
+        mcp.AddTool("self.study_timer.start",
+            "Start a study / Pomodoro countdown timer shown on the screen. "
+            "Use when the user asks to set a timer, remind them after some minutes, "
+            "or start a study session (default 25 minutes).",
+            PropertyList({Property("minutes", kPropertyTypeInteger, 25, 1, 180)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                display_->StartStudyTimer(properties["minutes"].value<int>());
+                return true;
+            });
+        mcp.AddTool("self.study_timer.add_minutes",
+            "Add minutes to the running study timer (or start one if none is running).",
+            PropertyList({Property("minutes", kPropertyTypeInteger, 5, 1, 60)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                int add = properties["minutes"].value<int>();
+                int left = display_->StudyTimerRemainingSeconds();
+                display_->StartStudyTimer((left + 59) / 60 + add);
+                return true;
+            });
+        mcp.AddTool("self.study_timer.cancel",
+            "Cancel the running study timer.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                display_->CancelStudyTimer();
+                return true;
+            });
+        mcp.AddTool("self.study_timer.get_remaining",
+            "Get how many seconds are left on the study timer (0 if no timer is running).",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                return display_->StudyTimerRemainingSeconds();
+            });
     }
 
 public:
