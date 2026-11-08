@@ -118,6 +118,8 @@ extern const lv_image_dsc_t ltkk_txt_cal_done;
 extern const lv_image_dsc_t ltkk_txt_speaker;
 extern const lv_image_dsc_t ltkk_txt_speaker_sub;
 extern const lv_image_dsc_t ltkk_txt_server;
+extern const lv_image_dsc_t ltkk_emo_neutral;
+extern const lv_image_dsc_t ltkk_emo_listen;
 extern const lv_image_dsc_t ltkk_emo_happy;
 extern const lv_image_dsc_t ltkk_emo_sad;
 extern const lv_image_dsc_t ltkk_emo_angry;

@@ -62,3 +62,8 @@ python scripts/build.py ltkk-esp32s3-2.8 --language vi-VN
 ```
 Hoặc dùng GitHub Actions: workflow "LTKK - Build firmware".
 Nạp file `build/merged-binary.bin` vào địa chỉ `0x0`.
+
+## Xem các cảm xúc của Lu
+- Ở màn hình chờ, **vuốt lên**: Lu lần lượt hiện 12 cảm xúc kèm nhãn tiếng Việt (~2 giây mỗi mặt).
+- Hoặc nói: “Lu ơi, cho xem các cảm xúc” / “Lu ơi, làm mặt giận xem nào”.
+- Chạm màn hình hoặc gọi Lu để dừng.

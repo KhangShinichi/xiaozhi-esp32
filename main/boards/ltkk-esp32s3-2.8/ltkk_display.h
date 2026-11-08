@@ -50,6 +50,9 @@ public:
     // Màn hình hiệu chỉnh cảm ứng: step 1/2 = hiện dấu + thứ 1/2, 0 = xong
     void ShowTouchCalibration(int step);
     void ToggleSettings();
+    // Xem các cảm xúc của Lu: lần lượt từng mặt kèm nhãn tiếng Việt (~2 giây mỗi mặt).
+    // key = "" -> tất cả; key = "happy", "sad"... -> chỉ hiện mặt đó 5 giây. Gọi từ luồng nào cũng được.
+    void StartEmotionDemo(const std::string& key = "");
 
 private:
     // Thứ / ngày / thời tiết dùng chung cho các kiểu màn hình chờ
@@ -93,6 +96,12 @@ private:
     lv_obj_t* hint_pill_ = nullptr;
     lv_obj_t* gear_btn_ = nullptr;
     std::atomic<int> standby_style_{0};
+    std::atomic<bool> demo_request_{false};
+    std::string demo_key_;
+    int demo_index_ = -1;        // -1 = không trình diễn
+    int demo_end_ = 0;
+    uint32_t demo_next_ms_ = 0;
+    void StopEmotionDemo();
     int shown_style_ = -1;
     int last_minute_ = -1;
     int last_second_ = -1;
@@ -198,6 +207,7 @@ private:
     void SetEyes(const lv_image_dsc_t* eyes);
     void Blink();
     void ShowEmotionTag(const lv_image_dsc_t* label);
+    bool OnDemoTick();
     void SetDigits(lv_obj_t* const* slots, int a, int b);
     void ShowStandbyStyle(int style);
     void UpdateClock(bool force);

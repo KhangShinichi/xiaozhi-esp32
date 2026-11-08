@@ -473,6 +473,18 @@ private:
                 return true;
             });
 
+        // --- Xem các cảm xúc của Lu
+        mcp.AddTool("self.screen.show_emotions",
+            "Show Lu's facial expressions on the screen with Vietnamese labels. Use when the user "
+            "asks to see Lu's emotions/faces/expressions (e.g. 'cho xem các cảm xúc', 'làm mặt "
+            "giận xem nào'). `emotion` empty = show all one by one (~25 s); or one of: neutral, "
+            "happy, love, wink, surprise, think, confused, shy, sad, angry, sleepy, listen.",
+            PropertyList({Property("emotion", kPropertyTypeString, std::string(""))}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                display_->StartEmotionDemo(properties["emotion"].value<std::string>());
+                return true;
+            });
+
         // --- Kiểu màn hình chờ
         mcp.AddTool("self.screen.set_standby_style",
             "Change the standby (idle) screen style: 0 = big digital clock, 1 = LTKK analog clock, "

@@ -90,6 +90,28 @@ const EmotionMap kEmotions[] = {
     {"sleepy", &ltkk_eyes_sleepy, &ltkk_emo_sleepy},
 };
 
+// Trình diễn cảm xúc (vuốt lên ở màn hình chờ, hoặc "Lu ơi, cho xem các cảm xúc")
+struct DemoFace {
+    const char* key;
+    const lv_image_dsc_t* eyes;
+    const lv_image_dsc_t* label;
+};
+const DemoFace kDemoFaces[] = {
+    {"neutral", &ltkk_eyes_neutral, &ltkk_emo_neutral},
+    {"happy", &ltkk_eyes_happy, &ltkk_emo_happy},
+    {"love", &ltkk_eyes_love, &ltkk_emo_love},
+    {"wink", &ltkk_eyes_wink, &ltkk_emo_wink},
+    {"surprise", &ltkk_eyes_surprise, &ltkk_emo_surprise},
+    {"think", &ltkk_eyes_think, &ltkk_emo_think},
+    {"confused", &ltkk_eyes_confused, &ltkk_emo_confused},
+    {"shy", &ltkk_eyes_shy, &ltkk_emo_shy},
+    {"sad", &ltkk_eyes_sad, &ltkk_emo_sad},
+    {"angry", &ltkk_eyes_angry, &ltkk_emo_angry},
+    {"sleepy", &ltkk_eyes_sleepy, &ltkk_emo_sleepy},
+    {"listen", &ltkk_eyes_listen, &ltkk_emo_listen},
+};
+constexpr int kDemoCount = sizeof(kDemoFaces) / sizeof(kDemoFaces[0]);
+
 inline int32_t Triangle(int32_t v, int32_t range) { return v <= range ? v : 2 * range - v; }
 
 void WaveExec(void* var, int32_t v) {
@@ -259,6 +281,22 @@ void LtkkDisplay::CreateFace() {
     emo_tag_img_ = lv_image_create(emo_tag_);
     lv_image_set_src(emo_tag_img_, &ltkk_emo_happy);
     SetHidden(emo_tag_, true);
+}
+
+void LtkkDisplay::StartEmotionDemo(const std::string& key) {
+    DisplayLockGuard lock(this);
+    demo_key_ = key;
+    demo_request_ = true;   // xử lý trong OnTick (luồng LVGL)
+}
+
+void LtkkDisplay::StopEmotionDemo() {
+    if (demo_index_ < 0) {
+        return;
+    }
+    demo_index_ = -1;
+    ShowEmotionTag(nullptr);
+    last_state_ = -1;       // vẽ lại màn hình theo trạng thái hiện tại
+    current_eyes_ = nullptr;
 }
 
 void LtkkDisplay::ShowEmotionTag(const lv_image_dsc_t* label) {
@@ -1301,6 +1339,10 @@ bool LtkkDisplay::HandleTap(int x, int y) {
         return false;
     }
     DisplayLockGuard lock(this);
+    if (demo_index_ >= 0) {
+        StopEmotionDemo();
+        return true;
+    }
     lv_obj_t* target = FindTarget(x, y);
     ESP_LOGI(TAG, "Tap (%d,%d) -> %s", x, y, target != nullptr ? "LTKK UI" : "chat");
     if (target == nullptr) {
@@ -1320,6 +1362,9 @@ bool LtkkDisplay::HandleSwipe(Swipe dir) {
         OpenSettings(true);
     } else if (dir == kSwipeUp && settings_open) {
         OpenSettings(false);
+    } else if (dir == kSwipeUp && !IsHidden(standby_)) {
+        demo_key_.clear();
+        demo_request_ = true;
     } else if ((dir == kSwipeLeft || dir == kSwipeRight) && !settings_open && !IsHidden(standby_)) {
         SetStandbyStyle(standby_style_.load() + (dir == kSwipeLeft ? 1 : -1));
     } else {
@@ -1377,11 +1422,63 @@ void LtkkDisplay::OnClick(lv_obj_t* t) {
 }
 
 // ------------------------------------------------------------------ vòng lặp giao diện
+// Trả về true khi đang trình diễn cảm xúc (bỏ qua cập nhật thường lệ)
+bool LtkkDisplay::OnDemoTick() {
+    uint32_t now_ms = lv_tick_get();
+    if (demo_request_.exchange(false)) {
+        demo_index_ = 0;
+        demo_end_ = kDemoCount;
+        for (int i = 0; i < kDemoCount && !demo_key_.empty(); i++) {
+            if (demo_key_ == kDemoFaces[i].key) {
+                demo_index_ = i;
+                demo_end_ = i + 1;
+            }
+        }
+        demo_next_ms_ = now_ms;
+        OpenSettings(false);
+        SetHidden(standby_, true);
+        SetHidden(wave_box_, true);
+        SetHidden(listening_label_, true);
+        if (emoji_box_ != nullptr) {
+            lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, -16);
+        }
+    }
+    if (demo_index_ < 0 || face_ == nullptr) {
+        return false;
+    }
+    // Bạn gọi Lu -> dừng trình diễn
+    if (Application::GetInstance().GetDeviceState() == kDeviceStateListening) {
+        StopEmotionDemo();
+        return false;
+    }
+    if ((int32_t)(now_ms - demo_next_ms_) < 0) {
+        return true;
+    }
+    if (demo_index_ >= demo_end_) {
+        StopEmotionDemo();
+        return false;
+    }
+    const auto& f = kDemoFaces[demo_index_];
+    SetEyes(f.eyes);
+    lv_image_set_scale(face_, 256);
+    blink_enabled_ = false;
+    ShowEmotionTag(f.label);
+    bool single = demo_end_ - demo_index_ == 1 && demo_end_ != kDemoCount;
+    uint32_t hold = single ? 5000 : 2200;
+    emo_tag_until_ms_ = now_ms + hold;
+    demo_next_ms_ = now_ms + hold;
+    demo_index_++;
+    return true;
+}
+
 void LtkkDisplay::TickCallback(lv_timer_t* timer) {
     static_cast<LtkkDisplay*>(lv_timer_get_user_data(timer))->OnTick();
 }
 
 void LtkkDisplay::OnTick() {
+    if (OnDemoTick()) {
+        return;
+    }
     auto state = Application::GetInstance().GetDeviceState();
     auto& music = LtkkMusic::GetInstance();
     int64_t now_us = esp_timer_get_time();
