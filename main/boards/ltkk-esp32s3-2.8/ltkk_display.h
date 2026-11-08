@@ -100,6 +100,9 @@ private:
     // Cài Wi-Fi
     lv_obj_t* wifi_panel_ = nullptr;
     lv_obj_t* wifi_qr_ = nullptr;
+    uint8_t* qr_pixels_ = nullptr;
+    lv_image_dsc_t qr_dsc_ = {};
+    std::string qr_text_;
     lv_obj_t* wifi_ssid_label_ = nullptr;
     lv_obj_t* wifi_url_label_ = nullptr;
 
@@ -149,6 +152,7 @@ private:
     void UpdateTimer(int64_t now_us);
     void UpdateMusic();
     void ShowWifiPanel(bool show);
+    void DrawQrCode(const std::string& text);
     void OpenQuickSettings(bool open);
     void RefreshQuickSettings();
     void OnTick();

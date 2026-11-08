@@ -2,8 +2,12 @@
 
 #include <esp_log.h>
 #include <esp_random.h>
+#include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <wifi_manager.h>
+
+#include <cstdlib>
+#include <memory>
 
 #include <cstring>
 #include <ctime>
@@ -23,6 +27,12 @@
 
 extern "C" {
 extern const lv_image_dsc_t ltkk_background;  // ltkk_background.c
+
+// Thư viện QR (Nayuki qrcodegen) đã có sẵn trong Xiaozhi qua esp_emote_gfx
+bool qrcodegen_encodeText(const char* text, uint8_t temp_buffer[], uint8_t qrcode[], int ecl,
+                          int min_version, int max_version, int mask, bool boost_ecl);
+int qrcodegen_getSize(const uint8_t qrcode[]);
+bool qrcodegen_getModule(const uint8_t qrcode[], int x, int y);
 }
 
 namespace {
@@ -696,13 +706,8 @@ void LtkkDisplay::CreateWifiPanel() {
     lv_obj_set_style_bg_color(qr_box, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_bg_opa(qr_box, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(qr_box, 12, 0);
-#if LV_USE_QRCODE
-    wifi_qr_ = lv_qrcode_create(qr_box);
-    lv_qrcode_set_size(wifi_qr_, 100);
-    lv_qrcode_set_dark_color(wifi_qr_, lv_color_hex(LTKK_COLOR_NAVY));
-    lv_qrcode_set_light_color(wifi_qr_, lv_color_hex(0xFFFFFF));
+    wifi_qr_ = lv_image_create(qr_box);
     lv_obj_center(wifi_qr_);
-#endif
     Image(left, &ltkk_txt_wifi_scan);
 
     lv_obj_t* right = Column(wifi_panel_, 9);
@@ -754,12 +759,58 @@ void LtkkDisplay::ShowWifiPanel(bool show) {
     }
     lv_label_set_text(wifi_ssid_label_, ssid.c_str());
     lv_label_set_text(wifi_url_label_, url.c_str());
-#if LV_USE_QRCODE
-    std::string qr = "WIFI:T:nopass;S:" + ssid + ";;";
-    lv_qrcode_update(wifi_qr_, qr.c_str(), qr.size());
-#endif
+    DrawQrCode("WIFI:T:nopass;S:" + ssid + ";;");
     lv_obj_move_foreground(wifi_panel_);
     SetHidden(wifi_panel_, false);
+}
+
+// Vẽ mã QR thành ảnh RGB565 (navy trên nền trắng), vừa khung 104 px
+void LtkkDisplay::DrawQrCode(const std::string& text) {
+    if (qr_pixels_ != nullptr && text == qr_text_) {
+        return;  // tên Wi-Fi của máy không đổi: chỉ vẽ một lần
+    }
+    qr_text_ = text;
+    constexpr int kBufLen = 3918;  // qrcodegen_BUFFER_LEN_MAX (phiên bản 40)
+    constexpr int kMaxVersion = 10;
+    std::unique_ptr<uint8_t[]> temp(new uint8_t[kBufLen]);
+    std::unique_ptr<uint8_t[]> qr(new uint8_t[kBufLen]);
+    // ecl 1 = MEDIUM, mask -1 = AUTO
+    if (!qrcodegen_encodeText(text.c_str(), temp.get(), qr.get(), 1, 1, kMaxVersion, -1, true)) {
+        ESP_LOGW(TAG, "QR encode failed");
+        return;
+    }
+    int modules = qrcodegen_getSize(qr.get());
+    int scale = 104 / modules;
+    if (scale < 1) {
+        scale = 1;
+    }
+    int side = modules * scale;
+    if (qr_pixels_ != nullptr) {
+        lv_image_set_src(wifi_qr_, nullptr);
+        free(qr_pixels_);
+    }
+    qr_pixels_ = (uint8_t*)heap_caps_malloc(side * side * 2, MALLOC_CAP_SPIRAM);
+    if (qr_pixels_ == nullptr) {
+        return;
+    }
+    uint16_t dark = lv_color_to_u16(lv_color_hex(LTKK_COLOR_NAVY));
+    uint16_t light = 0xFFFF;
+    uint16_t* px = reinterpret_cast<uint16_t*>(qr_pixels_);
+    for (int y = 0; y < side; y++) {
+        for (int x = 0; x < side; x++) {
+            px[y * side + x] = qrcodegen_getModule(qr.get(), x / scale, y / scale) ? dark : light;
+        }
+    }
+    qr_dsc_ = {};
+    qr_dsc_.header.magic = LV_IMAGE_HEADER_MAGIC;
+    qr_dsc_.header.cf = LV_COLOR_FORMAT_RGB565;
+    qr_dsc_.header.w = side;
+    qr_dsc_.header.h = side;
+    qr_dsc_.header.stride = side * 2;
+    qr_dsc_.data_size = side * side * 2;
+    qr_dsc_.data = qr_pixels_;
+    lv_image_set_src(wifi_qr_, &qr_dsc_);
+    lv_obj_center(wifi_qr_);
 }
 
 // ------------------------------------------------------------------ cài đặt nhanh

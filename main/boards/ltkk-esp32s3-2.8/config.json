@@ -5,7 +5,6 @@
         {
             "name": "ltkk-esp32s3-2.8",
             "sdkconfig_append": [
-                "CONFIG_LV_USE_QRCODE=y",
                 "CONFIG_FATFS_LFN_HEAP=y",
                 "CONFIG_FATFS_MAX_LFN=255",
                 "CONFIG_USE_MULTILINE_CHAT_MESSAGE=y"
