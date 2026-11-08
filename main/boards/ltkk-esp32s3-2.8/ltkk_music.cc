@@ -5,6 +5,8 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_vfs_fat.h>
+#include <lwip/sockets.h>
+#include <cJSON.h>
 #include <sdmmc_cmd.h>
 
 #include <algorithm>
@@ -22,6 +24,7 @@
 #include "esp_audio_simple_dec.h"
 #include "esp_audio_simple_dec_default.h"
 #include "protocols/protocol.h"
+#include "settings.h"
 
 #define TAG "LtkkMusic"
 #define SD_MOUNT_POINT "/sdcard"
@@ -339,7 +342,7 @@ std::vector<std::string> LtkkMusic::RadioList() {
 
 std::string LtkkMusic::CurrentTitle() {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (radio_.load()) {
+    if (mode_.load() != kModeSd) {
         return custom_url_.empty() ? kStations[station_ % kStationCount].name : custom_name_;
     }
     if (files_.empty()) {
@@ -376,7 +379,7 @@ bool LtkkMusic::Play(const std::string& name) {
             }
         }
     }
-    return Request(false);
+    return Request(kModeSd);
 }
 
 bool LtkkMusic::PlayRadio(int index) {
@@ -386,7 +389,7 @@ bool LtkkMusic::PlayRadio(int index) {
         station_ = ((index % kStationCount) + kStationCount) % kStationCount;
         custom_url_.clear();
     }
-    return Request(true);
+    return Request(kModeRadio);
 }
 
 bool LtkkMusic::PlayRadioByName(const std::string& name) {
@@ -411,7 +414,7 @@ bool LtkkMusic::PlayUrl(const std::string& url, const std::string& name) {
         custom_url_ = url;
         custom_name_ = name.empty() ? "Radio" : name;
     }
-    return Request(true);
+    return Request(kModeRadio);
 }
 
 bool LtkkMusic::PlayAny() {
@@ -421,7 +424,7 @@ bool LtkkMusic::PlayAny() {
     return PlayRadio(station_);
 }
 
-bool LtkkMusic::Request(bool radio) {
+bool LtkkMusic::Request(Mode mode) {
     if (active_.load() || pending_.load()) {
         stop_ = true;
         pending_ = false;
@@ -432,7 +435,7 @@ bool LtkkMusic::Request(bool radio) {
     stop_ = false;
     skip_ = 0;
     paused_ = false;
-    radio_ = radio;
+    mode_ = mode;
     pending_ = true;
     EnsureTask();
     xTaskNotifyGive(task_);
@@ -466,6 +469,208 @@ void LtkkMusic::Prev() {
         paused_ = false;
         skip_ = -1;
     }
+}
+
+// ------------------------------------------------------------------ nhạc trực tuyến
+namespace {
+
+std::string UrlEncode(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += (char)c;
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
+}
+
+bool HttpGetText(const std::string& url, std::string& body) {
+    auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
+    if (!http) {
+        return false;
+    }
+    http->SetTimeout(10000);
+    http->SetHeader("User-Agent", "LTKK-Lu/1.0");
+    bool ok = false;
+    if (auto opened = http->Open("GET", url); opened) {
+        auto status = http->GetStatusCode();
+        if (status && *status == 200) {
+            body = http->ReadAll();
+            ok = true;
+        }
+    }
+    http->Close();
+    return ok;
+}
+
+}  // namespace
+
+bool LtkkMusic::SearchRadio(const std::string& query, const std::string& countrycode) {
+    // Radio Browser: danh bạ đài mở, miễn phí, không cần khoá
+    static const char* kHosts[] = {"de1.api.radio-browser.info", "nl1.api.radio-browser.info",
+                                   "at1.api.radio-browser.info"};
+    std::string common = "&limit=12&hidebroken=true&order=clickcount&reverse=true";
+    if (!countrycode.empty()) {
+        common += "&countrycode=" + UrlEncode(countrycode);
+    }
+    for (const char* field : {"name", "tag"}) {
+        for (const char* host : kHosts) {
+            std::string body;
+            std::string url = std::string("https://") + host + "/json/stations/search?" + field +
+                              "=" + UrlEncode(query) + common;
+            if (!HttpGetText(url, body)) {
+                continue;  // thử máy chủ khác
+            }
+            cJSON* root = cJSON_Parse(body.c_str());
+            if (root == nullptr) {
+                continue;
+            }
+            std::string found_url, found_name;
+            cJSON* item;
+            cJSON_ArrayForEach(item, root) {
+                cJSON* u = cJSON_GetObjectItem(item, "url_resolved");
+                cJSON* n = cJSON_GetObjectItem(item, "name");
+                cJSON* codec = cJSON_GetObjectItem(item, "codec");
+                cJSON* hls = cJSON_GetObjectItem(item, "hls");
+                if (!cJSON_IsString(u) || !cJSON_IsString(codec)) {
+                    continue;
+                }
+                std::string c = Lower(codec->valuestring);
+                if ((c == "mp3" || c.find("aac") != std::string::npos) &&
+                    !(cJSON_IsNumber(hls) && hls->valueint == 1)) {
+                    found_url = u->valuestring;
+                    if (c.find("aac") != std::string::npos &&
+                        Lower(found_url).find("aac") == std::string::npos) {
+                        found_url += (found_url.find('?') == std::string::npos ? "?aac" : "&aac");
+                    }
+                    found_name = cJSON_IsString(n) ? n->valuestring : query;
+                    break;
+                }
+            }
+            cJSON_Delete(root);
+            if (!found_url.empty()) {
+                ESP_LOGI(TAG, "Radio found: %s", found_name.c_str());
+                return PlayUrl(found_url, found_name);
+            }
+            break;  // máy chủ trả lời nhưng không có kết quả: thử trường khác
+        }
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    error_ = "Không tìm thấy đài phù hợp với: " + query;
+    return false;
+}
+
+void LtkkMusic::SetMusicServer(const std::string& url) {
+    std::string u = url;
+    if (!u.empty() && u.rfind("http", 0) != 0) {
+        u = "http://" + u;
+    }
+    while (!u.empty() && u.back() == '/') {
+        u.pop_back();
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    server_ = u;
+    Settings settings("ltkk", true);
+    settings.SetString("music_srv", u);
+}
+
+std::string LtkkMusic::GetMusicServer() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (server_.empty()) {
+        Settings settings("ltkk", false);
+        server_ = settings.GetString("music_srv", "");
+    }
+    return server_;
+}
+
+// Tìm phần mềm LTKK (máy chủ nhạc) trong mạng nhà bằng gói UDP quảng bá
+std::string LtkkMusic::DiscoverServer() {
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        return "";
+    }
+    int yes = 1;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
+    struct timeval tv = {1, 500000};
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    struct sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons(8766);
+    to.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+    const char* ask = "LTKK_MUSIC_DISCOVER";
+    std::string found;
+    for (int attempt = 0; attempt < 2 && found.empty(); attempt++) {
+        sendto(sock, ask, strlen(ask), 0, (struct sockaddr*)&to, sizeof(to));
+        char buf[64] = {};
+        struct sockaddr_in from = {};
+        socklen_t from_len = sizeof(from);
+        int n = recvfrom(sock, buf, sizeof(buf) - 1, 0, (struct sockaddr*)&from, &from_len);
+        if (n > 11 && strncmp(buf, "LTKK_MUSIC ", 11) == 0) {
+            int port = atoi(buf + 11);
+            char ip[16];
+            inet_ntoa_r(from.sin_addr, ip, sizeof(ip));
+            found = std::string("http://") + ip + ":" + std::to_string(port > 0 ? port : 8765);
+        }
+    }
+    close(sock);
+    if (!found.empty()) {
+        ESP_LOGI(TAG, "Music server found: %s", found.c_str());
+        SetMusicServer(found);
+    }
+    return found;
+}
+
+bool LtkkMusic::PlaySong(const std::string& song, const std::string& artist) {
+    std::string base = GetMusicServer();
+    std::string body;
+    std::string query = "/stream_pcm?song=" + UrlEncode(song) + "&artist=" + UrlEncode(artist);
+    bool ok = !base.empty() && HttpGetText(base + query, body);
+    if (!ok) {
+        // Máy chủ cũ không trả lời (đổi IP?) -> tìm lại trong mạng nhà
+        base = DiscoverServer();
+        ok = !base.empty() && HttpGetText(base + query, body);
+    }
+    if (!ok) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_ = "Chưa kết nối được máy chủ nhạc. Hãy bật Máy chủ nhạc trong phần mềm LTKK trên máy "
+                 "tính (cùng mạng Wi-Fi), hoặc dùng radio.";
+        return false;
+    }
+    cJSON* root = cJSON_Parse(body.c_str());
+    std::string audio, title;
+    if (root != nullptr) {
+        cJSON* a = cJSON_GetObjectItem(root, "audio_url");
+        cJSON* t = cJSON_GetObjectItem(root, "title");
+        cJSON* ar = cJSON_GetObjectItem(root, "artist");
+        if (cJSON_IsString(a)) {
+            audio = a->valuestring;
+        }
+        title = cJSON_IsString(t) ? t->valuestring : song;
+        if (cJSON_IsString(ar) && strlen(ar->valuestring) > 0) {
+            title += std::string(" - ") + ar->valuestring;
+        }
+        cJSON_Delete(root);
+    }
+    if (audio.empty()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_ = "Máy chủ nhạc không có bài: " + song;
+        return false;
+    }
+    if (audio[0] == '/') {
+        audio = base + audio;  // đường dẫn tương đối
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_.clear();
+        custom_url_ = audio;
+        custom_name_ = title;
+    }
+    return Request(kModeSong);
 }
 
 // ------------------------------------------------------------------ luồng phát
@@ -516,7 +721,16 @@ void LtkkMusic::TaskLoop() {
         while (!stop_.load()) {
             bool ok;
             int count;
-            if (radio_.load()) {
+            if (mode_.load() == kModeSong) {
+                std::string url;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    url = custom_url_;
+                }
+                PlayStream(url);  // phát một lần rồi dừng
+                break;
+            }
+            if (mode_.load() == kModeRadio) {
                 std::string url;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);

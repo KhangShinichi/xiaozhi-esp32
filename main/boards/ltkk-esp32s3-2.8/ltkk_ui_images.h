@@ -107,6 +107,8 @@ extern const lv_image_dsc_t ltkk_txt_radio;
 extern const lv_image_dsc_t ltkk_txt_live;
 extern const lv_image_dsc_t ltkk_txt_connecting;
 extern const lv_image_dsc_t ltkk_txt_swipe;
+extern const lv_image_dsc_t ltkk_txt_online;
+extern const lv_image_dsc_t ltkk_txt_server;
 
 #ifdef __cplusplus
 }

@@ -41,9 +41,12 @@ public:
     void SetStandbyStyle(int style);
     int GetStandbyStyle() const { return standby_style_.load(); }
 
-    // Cảm ứng: bo mạch đưa toạ độ màn hình vào đây (luồng cảm ứng)
-    void FeedTouch(bool pressed, int x, int y);
-    bool TakeTouchConsumed();
+    // Cảm ứng - bo mạch gọi từ luồng cảm ứng, toạ độ màn hình 320x240.
+    // Trả về true nếu giao diện LTKK đã xử lý (khi đó bo mạch KHÔNG bật trò chuyện).
+    enum Swipe { kSwipeUp, kSwipeDown, kSwipeLeft, kSwipeRight };
+    void HandlePress(bool down, int x, int y);   // hiệu ứng nhấn + chấm kiểm tra
+    bool HandleTap(int x, int y);
+    bool HandleSwipe(Swipe dir);
     void ToggleSettings();
 
 private:
@@ -151,12 +154,8 @@ private:
     std::atomic<bool> settings_toggle_request_{false};
 
     // Cảm ứng
-    lv_indev_t* indev_ = nullptr;
     lv_obj_t* touch_dot_ = nullptr;
-    std::atomic<bool> touch_pressed_{false};
-    std::atomic<int> touch_x_{0};
-    std::atomic<int> touch_y_{0};
-    std::atomic<bool> touch_consumed_{false};
+    lv_obj_t* pressed_obj_ = nullptr;
 
     lv_timer_t* tick_timer_ = nullptr;
     int last_state_ = -1;
@@ -181,6 +180,8 @@ private:
     void StyleLowBattery();
     void PlaceUnderChrome(lv_obj_t* obj);
     void MakeInteractive(lv_obj_t* obj);
+    lv_obj_t* FindTarget(int x, int y);
+    void OnClick(lv_obj_t* target);
     lv_obj_t* MakeButton(lv_obj_t* parent, int w, int h, uint32_t bg, bool outline);
 
     // Cập nhật
@@ -202,8 +203,4 @@ private:
     void OnTick();
 
     static void TickCallback(lv_timer_t* timer);
-    static void IndevRead(lv_indev_t* indev, lv_indev_data_t* data);
-    static void OnPressedEvent(lv_event_t* e);
-    static void OnGestureEvent(lv_event_t* e);
-    static void OnButtonEvent(lv_event_t* e);
 };

@@ -32,6 +32,7 @@
 #include "ltkk_weather.h"
 #include <cJSON.h>
 #include <utility>
+#include <cstdlib>
 
 #define TAG "LtkkEsp32S3"
 
@@ -101,61 +102,74 @@ private:
     static void TouchTask(void *arg) {
         auto *self = static_cast<LtkkEsp32S3Display*>(arg);
         auto &app = Application::GetInstance();
+        auto *ui = self->display_;
 
         uint32_t last_tap = 0;
         uint32_t down_start = 0;
         bool down = false;
+        int start_x = 0, start_y = 0, last_x = 0, last_y = 0;
         int logged = 0;
 
         while (true) {
             bool t;
             uint16_t x, y;
             self->touch_.Read(t, x, y);
-            int sx = 0, sy = 0;
-            if (t) {
-                MapTouch(x, y, sx, sy);
-                if (!down && logged < 20) {
-                    logged++;
-                    ESP_LOGI(TAG, "Touch raw=(%d,%d) screen=(%d,%d)", x, y, sx, sy);
-                }
-            }
-            if (self->display_ != nullptr) {
-                self->display_->FeedTouch(t, sx, sy);
-            }
-
             uint32_t now = esp_timer_get_time() / 1000;
 
             if (t) {
+                int sx, sy;
+                MapTouch(x, y, sx, sy);
+                last_x = sx;
+                last_y = sy;
                 if (!down) {
                     down = true;
                     down_start = now;
+                    start_x = sx;
+                    start_y = sy;
+                    if (logged < 30) {
+                        logged++;
+                        ESP_LOGI(TAG, "Touch raw=(%d,%d) screen=(%d,%d)", x, y, sx, sy);
+                    }
                 }
-            }
-
-            if (!t && down) {
+                if (ui != nullptr) {
+                    ui->HandlePress(true, sx, sy);
+                }
+            } else if (down) {
                 down = false;
                 uint32_t press = now - down_start;
+                int dx = last_x - start_x;
+                int dy = last_y - start_y;
+                bool handled = false;
+                if (ui != nullptr) {
+                    ui->HandlePress(false, last_x, last_y);
+                    // Vuốt: ưu tiên trước chạm
+                    if (abs(dy) > 50 && abs(dy) > abs(dx)) {
+                        handled = ui->HandleSwipe(dy > 0 ? LtkkDisplay::kSwipeDown
+                                                         : LtkkDisplay::kSwipeUp);
+                    } else if (abs(dx) > 60 && abs(dx) > abs(dy)) {
+                        handled = ui->HandleSwipe(dx > 0 ? LtkkDisplay::kSwipeRight
+                                                         : LtkkDisplay::kSwipeLeft);
+                    } else if (press < 1000) {
+                        handled = ui->HandleTap(last_x, last_y);  // nút trên giao diện LTKK?
+                    }
+                }
 
-                // Chờ giao diện xử lý xong lần chạm (nút, thanh trượt, vuốt)
-                vTaskDelay(pdMS_TO_TICKS(80));
-                bool consumed = self->display_ != nullptr && self->display_->TakeTouchConsumed();
-
-                if (consumed) {
-                    // giao diện LTKK đã xử lý
+                if (handled || abs(dx) > 50 || abs(dy) > 50) {
+                    // giao diện LTKK đã xử lý, hoặc là cú vuốt: không bật trò chuyện
                 } else if (press > 3000) {
                     self->EnterWifiConfigMode();      // giữ hơn 3 giây: cài Wi-Fi
                 } else if (press > 1000) {
-                    self->display_->ToggleSettings();       // giữ 1-3 giây: mở cài đặt
-                } else if (now - last_tap < 250) {
+                    ui->ToggleSettings();             // giữ 1-3 giây: mở cài đặt
+                } else if (now - last_tap < 300) {
                     app.StartListening();             // chạm 2 lần
                     last_tap = 0;
                 } else {
-                    app.ToggleChatState();            // chạm 1 lần
+                    app.ToggleChatState();            // chạm 1 lần vào vùng trống
                     last_tap = now;
                 }
             }
 
-            vTaskDelay(pdMS_TO_TICKS(30));
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
 
@@ -318,14 +332,51 @@ private:
         // --- Radio trực tuyến
         mcp.AddTool("self.radio.play",
             "Play online radio / streaming music (lofi, chill, relax, focus stations). Use when "
-            "the user asks for online music, radio, or background music for studying. `station` "
-            "is optional (part of the station name, e.g. `lofi`, `chill`, `focus`). "
+            "the user asks for background music for studying without naming a song or station. "
+            "`station` is optional (`lofi`, `chill`, `focus`). For other stations use self.radio.search. "
             "YouTube and Spotify are not supported. Radio starts after you finish speaking.",
             PropertyList({Property("station", kPropertyTypeString, std::string(""))}),
             [](const PropertyList& properties) -> ToolResult {
                 auto& music = LtkkMusic::GetInstance();
                 music.PlayRadioByName(properties["station"].value<std::string>());
                 return std::string("Playing radio: ") + music.CurrentTitle();
+            });
+        mcp.AddTool("self.music.play_song",
+            "Play a specific song by name (online, via the user's LTKK music server). Use when the "
+            "user asks for a particular song or artist, e.g. 'mở bài Nơi này có anh'. "
+            "`song_name` is required, `artist_name` optional. If this fails, suggest radio. "
+            "The song starts after you finish speaking; keep your reply short.",
+            PropertyList({Property("song_name", kPropertyTypeString),
+                          Property("artist_name", kPropertyTypeString, std::string(""))}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& music = LtkkMusic::GetInstance();
+                if (!music.PlaySong(properties["song_name"].value<std::string>(),
+                                    properties["artist_name"].value<std::string>())) {
+                    return std::unexpected(music.LastError());
+                }
+                return std::string("Playing: ") + music.CurrentTitle();
+            });
+        mcp.AddTool("self.radio.search",
+            "Search the worldwide online radio directory and play the best match. `query` is a "
+            "station name or genre/tag, e.g. 'VOV', 'nhac tre', 'bolero', 'lofi', 'jazz', 'news'. "
+            "`countrycode` optional ISO code, e.g. 'VN' for Vietnamese stations.",
+            PropertyList({Property("query", kPropertyTypeString),
+                          Property("countrycode", kPropertyTypeString, std::string(""))}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& music = LtkkMusic::GetInstance();
+                if (!music.SearchRadio(properties["query"].value<std::string>(),
+                                       properties["countrycode"].value<std::string>())) {
+                    return std::unexpected(music.LastError());
+                }
+                return std::string("Playing radio: ") + music.CurrentTitle();
+            });
+        mcp.AddTool("self.music.set_server",
+            "Set the address of the LTKK music server (e.g. '192.168.1.10:8765'). Normally not "
+            "needed: the device finds the server on the home network automatically.",
+            PropertyList({Property("url", kPropertyTypeString)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                LtkkMusic::GetInstance().SetMusicServer(properties["url"].value<std::string>());
+                return true;
             });
         mcp.AddTool("self.radio.play_url",
             "Play an internet radio stream from a direct http(s) MP3 or AAC stream URL "

@@ -194,9 +194,10 @@ void LtkkDisplay::PlaceUnderChrome(lv_obj_t* obj) {
     }
 }
 
+// Đánh dấu đối tượng bấm được: cảm ứng tìm đối tượng có cờ USER_1 dưới ngón tay
 void LtkkDisplay::MakeInteractive(lv_obj_t* obj) {
-    lv_obj_add_event_cb(obj, OnPressedEvent, LV_EVENT_PRESSED, this);
-    lv_obj_add_event_cb(obj, OnButtonEvent, LV_EVENT_CLICKED, this);
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_USER_1);
 }
 
 lv_obj_t* LtkkDisplay::MakeButton(lv_obj_t* parent, int w, int h, uint32_t bg, bool outline) {
@@ -844,22 +845,27 @@ void LtkkDisplay::CreateMusic(lv_obj_t* parent) {
 
 void LtkkDisplay::UpdateMusic() {
     auto& music = LtkkMusic::GetInstance();
-    int mode = music.IsRadio() ? (music.IsBuffering() ? 2 : 1) : 0;
-    if (mode != music_mode_shown_) {
-        music_mode_shown_ = mode;
-        lv_image_set_src(music_kind_img_, mode == 0 ? &ltkk_txt_music : &ltkk_txt_radio);
-        lv_image_set_src(music_sub_img_, mode == 0   ? &ltkk_txt_sdcard
-                                         : mode == 1 ? &ltkk_txt_live
-                                                     : &ltkk_txt_connecting);
-        lv_image_set_src(music_art_icon_, mode == 0 ? &ltkk_icon_note : &ltkk_icon_radio);
-        lv_image_set_scale(music_art_icon_, mode == 0 ? 256 : 420);
+    // 0 = thẻ nhớ, 1 = radio, 2 = bài hát trực tuyến; +10 khi đang kết nối
+    int mode = music.IsRadio() ? 1 : (music.IsSong() ? 2 : 0);
+    int key = mode + (music.IsBuffering() ? 10 : 0);
+    if (key != music_mode_shown_) {
+        music_mode_shown_ = key;
+        lv_image_set_src(music_kind_img_, mode == 0   ? &ltkk_txt_music
+                                          : mode == 1 ? &ltkk_txt_radio
+                                                      : &ltkk_txt_online);
+        lv_image_set_src(music_sub_img_, music.IsBuffering() ? &ltkk_txt_connecting
+                                         : mode == 0         ? &ltkk_txt_sdcard
+                                         : mode == 1         ? &ltkk_txt_live
+                                                             : &ltkk_txt_server);
+        lv_image_set_src(music_art_icon_, mode == 1 ? &ltkk_icon_radio : &ltkk_icon_note);
+        lv_image_set_scale(music_art_icon_, mode == 1 ? 420 : 256);
     }
     std::string title = music.CurrentTitle();
     if (title != music_title_text_) {
         music_title_text_ = title;
         lv_label_set_text(music_title_, title.c_str());
     }
-    lv_bar_set_value(music_bar_, music.IsRadio() ? 1000 : music.ProgressPermille(), LV_ANIM_OFF);
+    lv_bar_set_value(music_bar_, mode == 0 ? music.ProgressPermille() : 1000, LV_ANIM_OFF);
     bool paused = music.IsPaused();
     if (paused != music_paused_shown_) {
         music_paused_shown_ = paused;
@@ -1004,7 +1010,7 @@ void LtkkDisplay::CreateSettings() {
                           LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(settings_, 6, 0);
     lv_obj_set_style_pad_column(settings_, 6, 0);
-    lv_obj_add_event_cb(settings_, OnPressedEvent, LV_EVENT_PRESSED, this);
+    MakeInteractive(settings_);  // chạm vào vùng trống của trang cài đặt: không bật trò chuyện
 
     // Tiêu đề + nút đóng
     lv_obj_t* head = Box(settings_);
@@ -1142,16 +1148,12 @@ void LtkkDisplay::ChangeBrightness(int delta) {
 }
 
 // ------------------------------------------------------------------ cảm ứng
+// Không dùng hệ thống sự kiện cảm ứng của LVGL (dễ lỡ các cú chạm nhanh). Bo mạch tự
+// đọc FT6336G rồi gọi HandleTap / HandleSwipe; ở đây tìm đúng nút dưới ngón tay.
 void LtkkDisplay::CreateTouch() {
-    indev_ = lv_indev_create();
-    lv_indev_set_type(indev_, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(indev_, IndevRead);
-    lv_indev_set_user_data(indev_, this);
-    lv_indev_set_display(indev_, display_);
-    lv_obj_add_event_cb(lv_screen_active(), OnGestureEvent, LV_EVENT_GESTURE, this);
 #if LTKK_TOUCH_DEBUG
     touch_dot_ = Box(lv_layer_top());
-    lv_obj_set_size(touch_dot_, 12, 12);
+    lv_obj_set_size(touch_dot_, 14, 14);
     lv_obj_set_style_radius(touch_dot_, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_opa(touch_dot_, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(touch_dot_, lv_color_hex(LTKK_COLOR_ORANGE), 0);
@@ -1161,103 +1163,114 @@ void LtkkDisplay::CreateTouch() {
 #endif
 }
 
-void LtkkDisplay::FeedTouch(bool pressed, int x, int y) {
-    if (pressed && !touch_pressed_.load()) {
-        touch_consumed_ = false;
+lv_obj_t* LtkkDisplay::FindTarget(int x, int y) {
+    lv_point_t pt = {x, y};
+    lv_obj_t* obj = lv_indev_search_obj(lv_screen_active(), &pt);
+    while (obj != nullptr && !lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_1)) {
+        obj = lv_obj_get_parent(obj);
     }
-    touch_x_ = x;
-    touch_y_ = y;
-    touch_pressed_ = pressed;
+    return obj;
 }
 
-bool LtkkDisplay::TakeTouchConsumed() { return touch_consumed_.exchange(false); }
-
-void LtkkDisplay::IndevRead(lv_indev_t* indev, lv_indev_data_t* data) {
-    auto self = static_cast<LtkkDisplay*>(lv_indev_get_user_data(indev));
-    bool pressed = self->touch_pressed_.load();
-    data->point.x = self->touch_x_.load();
-    data->point.y = self->touch_y_.load();
-    data->state = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-    if (self->touch_dot_ != nullptr) {
-        if (pressed) {
-            lv_obj_set_pos(self->touch_dot_, data->point.x - 6, data->point.y - 6);
+void LtkkDisplay::HandlePress(bool down, int x, int y) {
+    if (!setup_ui_called_) {
+        return;
+    }
+    DisplayLockGuard lock(this);
+    if (pressed_obj_ != nullptr) {
+        lv_obj_remove_state(pressed_obj_, LV_STATE_PRESSED);
+        pressed_obj_ = nullptr;
+    }
+    if (down) {
+        lv_obj_t* target = FindTarget(x, y);
+        if (target != nullptr && target != settings_) {
+            lv_obj_add_state(target, LV_STATE_PRESSED);
+            pressed_obj_ = target;
         }
-        SetHidden(self->touch_dot_, !pressed);
+        settings_last_ms_ = lv_tick_get();
+    }
+    if (touch_dot_ != nullptr) {
+        lv_obj_set_pos(touch_dot_, x - 7, y - 7);
+        SetHidden(touch_dot_, !down);
     }
 }
 
-void LtkkDisplay::OnPressedEvent(lv_event_t* e) {
-    auto self = static_cast<LtkkDisplay*>(lv_event_get_user_data(e));
-    self->touch_consumed_ = true;
-    self->settings_last_ms_ = lv_tick_get();
+bool LtkkDisplay::HandleTap(int x, int y) {
+    if (!setup_ui_called_) {
+        return false;
+    }
+    DisplayLockGuard lock(this);
+    lv_obj_t* target = FindTarget(x, y);
+    ESP_LOGI(TAG, "Tap (%d,%d) -> %s", x, y, target != nullptr ? "LTKK UI" : "chat");
+    if (target == nullptr) {
+        return false;
+    }
+    OnClick(target);
+    return true;
 }
 
-void LtkkDisplay::OnGestureEvent(lv_event_t* e) {
-    auto self = static_cast<LtkkDisplay*>(lv_event_get_user_data(e));
-    lv_indev_t* indev = lv_indev_active();
-    if (indev == nullptr) {
-        return;
+bool LtkkDisplay::HandleSwipe(Swipe dir) {
+    if (!setup_ui_called_) {
+        return false;
     }
-    lv_dir_t dir = lv_indev_get_gesture_dir(indev);
-    bool settings_open = !IsHidden(self->settings_);
-    if (dir == LV_DIR_BOTTOM && !settings_open) {
-        self->OpenSettings(true);
-    } else if (dir == LV_DIR_TOP && settings_open) {
-        self->OpenSettings(false);
-    } else if ((dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) && !settings_open &&
-               !IsHidden(self->standby_)) {
-        self->SetStandbyStyle(self->standby_style_.load() + (dir == LV_DIR_LEFT ? 1 : -1));
+    DisplayLockGuard lock(this);
+    bool settings_open = !IsHidden(settings_);
+    if (dir == kSwipeDown && !settings_open) {
+        OpenSettings(true);
+    } else if (dir == kSwipeUp && settings_open) {
+        OpenSettings(false);
+    } else if ((dir == kSwipeLeft || dir == kSwipeRight) && !settings_open && !IsHidden(standby_)) {
+        SetStandbyStyle(standby_style_.load() + (dir == kSwipeLeft ? 1 : -1));
     } else {
-        return;
+        return settings_open;  // đang mở cài đặt: nuốt mọi thao tác
     }
-    self->touch_consumed_ = true;
+    return true;
 }
 
-void LtkkDisplay::OnButtonEvent(lv_event_t* e) {
-    auto self = static_cast<LtkkDisplay*>(lv_event_get_user_data(e));
-    lv_obj_t* t = lv_event_get_current_target_obj(e);
+void LtkkDisplay::OnClick(lv_obj_t* t) {
     auto& music = LtkkMusic::GetInstance();
+    settings_last_ms_ = lv_tick_get();
 
-    if (t == self->gear_btn_) {
-        self->OpenSettings(true);
-    } else if (t == self->set_close_btn_) {
-        self->OpenSettings(false);
-    } else if (t == self->set_vol_minus_) {
-        self->ChangeVolume(-10);
-    } else if (t == self->set_vol_plus_) {
-        self->ChangeVolume(10);
-    } else if (t == self->set_bri_minus_) {
-        self->ChangeBrightness(-10);
-    } else if (t == self->set_bri_plus_) {
-        self->ChangeBrightness(10);
-    } else if (t == self->set_theme_tile_) {
-        bool dark = self->current_theme_ != nullptr && self->current_theme_->name() == "dark";
+    if (t == gear_btn_) {
+        OpenSettings(true);
+    } else if (t == set_close_btn_) {
+        OpenSettings(false);
+    } else if (t == set_vol_minus_) {
+        ChangeVolume(-10);
+    } else if (t == set_vol_plus_) {
+        ChangeVolume(10);
+    } else if (t == set_bri_minus_) {
+        ChangeBrightness(-10);
+    } else if (t == set_bri_plus_) {
+        ChangeBrightness(10);
+    } else if (t == set_theme_tile_) {
+        bool dark = current_theme_ != nullptr && current_theme_->name() == "dark";
         auto theme = LvglThemeManager::GetInstance().GetTheme(dark ? "light" : "dark");
         if (theme != nullptr) {
-            self->SetTheme(theme);
+            SetTheme(theme);
         }
-    } else if (t == self->set_style_tile_) {
-        self->SetStandbyStyle(self->standby_style_.load() + 1);
-        self->RefreshSettings();
-    } else if (t == self->set_media_tile_) {
+    } else if (t == set_style_tile_) {
+        SetStandbyStyle(standby_style_.load() + 1);
+        RefreshSettings();
+    } else if (t == set_media_tile_) {
         if (music.IsActive() || music.IsPending()) {
             music.Stop();
         } else {
             music.PlayAny();
-            self->OpenSettings(false);
+            OpenSettings(false);
         }
-        self->RefreshSettings();
-    } else if (t == self->timer_pause_btn_) {
-        self->PauseResumeStudyTimer();
-    } else if (t == self->timer_cancel_btn_) {
-        self->CancelStudyTimer();
-    } else if (t == self->music_play_btn_) {
+        RefreshSettings();
+    } else if (t == timer_pause_btn_) {
+        PauseResumeStudyTimer();
+    } else if (t == timer_cancel_btn_) {
+        CancelStudyTimer();
+    } else if (t == music_play_btn_) {
         music.TogglePause();
-    } else if (t == self->music_next_btn_) {
+    } else if (t == music_next_btn_) {
         music.Next();
-    } else if (t == self->music_prev_btn_) {
+    } else if (t == music_prev_btn_) {
         music.Prev();
-    } else if (t == self->music_stop_btn_) {
+    } else if (t == music_stop_btn_) {
         music.Stop();
     }
 }

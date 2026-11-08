@@ -34,12 +34,20 @@ Board này dùng chung sơ đồ chân với `freenove-esp32s3-display-2.8-lcd`.
 - "Đổi màn hình chờ sang kiểu đồng hồ kim"
 - YouTube / Spotify: không hỗ trợ (cần ứng dụng và bản quyền của họ)
 
+## Nhạc trực tuyến
+- Radio: "Lu ơi, mở đài VOV", "mở nhạc bolero", "mở radio jazz" -> tìm trong Radio Browser
+  (danh bạ hơn 50.000 đài, miễn phí). Thêm "của Việt Nam" để ưu tiên đài trong nước.
+- Bài hát theo tên: "Lu ơi, mở bài Nơi này có anh" -> qua Máy chủ nhạc trong phần mềm
+  LTKK ESP Tool trên máy tính (cùng mạng Wi-Fi, Lu tự tìm thấy). Máy chủ khác cũng dùng được
+  nếu trả về JSON {title, artist, audio_url} ở đường dẫn /stream_pcm?song=&artist=.
+
 ## Nhạc & radio
 - Thẻ microSD FAT32, file .mp3 .wav .aac .m4a .flac .ogg ở thư mục gốc hoặc /music
 - Đài radio sửa trong `kStations` (ltkk_music.cc): cần luồng MP3/AAC trực tiếp qua http(s)
 
 ## Thao tác chạm
-- Chạm 1 lần: bắt đầu / dừng trò chuyện; chạm 2 lần: bắt đầu nghe
+- Chạm vào nút / ô trên màn hình: chỉ bấm nút đó (không bật trò chuyện)
+- Chạm 1 lần vào vùng trống: bắt đầu / dừng trò chuyện; chạm 2 lần: bắt đầu nghe
 - Vuốt xuống / giữ 1-3 giây: cài đặt; vuốt ngang trên màn hình chờ: đổi kiểu
 - Giữ hơn 3 giây: cài Wi-Fi
 - Chấm cam hiện ở chỗ chạm (tắt bằng LTKK_TOUCH_DEBUG 0 trong ltkk_brand.h).
