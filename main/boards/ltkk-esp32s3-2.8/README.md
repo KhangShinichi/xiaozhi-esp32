@@ -11,37 +11,39 @@ Board này dùng chung sơ đồ chân với `freenove-esp32s3-display-2.8-lcd`.
 - Codec ES8311 + ampli FM8002E, micro MEMS
 - LED RGB IO42, nút BOOT IO0, đo pin IO9
 
-## Giao diện Lu - LTKK (theo bộ thiết kế 11 màn hình)
-1. Khởi động: logo LTKK + "Học để làm" (`ltkk_brand.cc`)
-2. Chờ: đồng hồ lớn, thứ/ngày, thời tiết, gợi ý "Nói Hi ESP hoặc chạm để gọi Lu"
-3. Đang nghe: mắt mở to, sóng âm cam/xanh, "Lu đang nghe nè…"
-4. Đang nói: biểu cảm + khung phụ đề có nhãn LU / BẠN
-5. (Kiểu tin nhắn WeChat: tuỳ chọn build `display_style=wechat`, khi đó không có khuôn mặt)
-6. Hẹn giờ học: vòng đếm ngược, nút Tạm dừng / Huỷ, chuông khi hết giờ
-7. Phát nhạc: file .ogg từ thẻ microSD, nút lùi / dừng / tiếp
-8. Cài Wi-Fi: mã QR + 3 bước
-9. 10 biểu cảm robot, tự chớp mắt
-10. Cài đặt nhanh: vuốt xuống hoặc giữ 1-3 giây - âm lượng, độ sáng, giao diện, Wi-Fi, pin
-11. Pin yếu: khung thông báo trắng viền cam
+## Giao diện Lu - LTKK
+- Khởi động: logo LTKK + "Học để làm"
+- Màn hình chờ 4 kiểu (vuốt ngang hoặc vào Cài đặt để đổi): Đồng hồ / Kim LTKK / Lu ngủ / Thẻ LTKK
+- Đang nghe: mắt mở to, sóng âm; Đang nói: 10 biểu cảm + phụ đề có nhãn LU / BẠN
+- Hẹn giờ học, Nhạc thẻ nhớ, Radio trực tuyến, Cài Wi-Fi bằng mã QR, Pin yếu
+- Bộ icon riêng LTKK: nét tròn xanh ngọc + "nút mạch" cam (lấy từ logo)
+
+## Cài đặt (dễ bấm)
+- Chạm nút bánh răng ở góc dưới phải màn hình chờ, hoặc vuốt xuống, hoặc giữ 1-3 giây
+- Ô Âm lượng / Độ sáng: nút − và + (mỗi lần 10%)
+- Ô Giao diện: chạm để đổi Tối / Sáng
+- Ô Màn hình chờ: chạm để đổi kiểu
+- Ô Nhạc & Radio: chạm để phát (thẻ nhớ, nếu không có thì radio) / chạm lần nữa để tắt
+- Tự đóng sau 15 giây không chạm; nút X để đóng ngay
 
 ## Ra lệnh bằng giọng nói (MCP)
-- "Hẹn giờ học 25 phút", "Thêm 5 phút", "Tạm dừng hẹn giờ", "Còn bao lâu?", "Huỷ hẹn giờ"
-- "Mở nhạc", "Phát bài <tên>", "Bài tiếp", "Tắt nhạc", "Trong thẻ nhớ có bài gì?"
-- "Đặt thành phố thời tiết là Đà Nẵng"
-- "Chuyển giao diện sáng/tối", "Tăng độ sáng", "Giảm âm lượng"
+- "Mở radio lofi", "Mở nhạc thư giãn", "Đổi đài", "Tắt nhạc"
+- "Phát bài <tên> trong thẻ nhớ", "Trong thẻ có bài gì?"
+- "Hẹn giờ học 25 phút", "Tạm dừng hẹn giờ", "Thêm 5 phút", "Huỷ hẹn giờ"
+- "Đặt thành phố thời tiết là Hà Nội"
+- "Đổi màn hình chờ sang kiểu đồng hồ kim"
+- YouTube / Spotify: không hỗ trợ (cần ứng dụng và bản quyền của họ)
 
-## Nhạc trên thẻ nhớ
-- Thẻ microSD định dạng FAT32, chép file `.ogg` vào thư mục gốc hoặc `/music`.
-- Đổi mp3 sang ogg (Opus mono 16 kHz):
-  `ffmpeg -i bai_hat.mp3 -c:a libopus -b:a 32k -ac 1 -ar 16000 -frame_duration 60 bai_hat.ogg`
-- Đặt tên file không dấu để hiển thị đúng.
+## Nhạc & radio
+- Thẻ microSD FAT32, file .mp3 .wav .aac .m4a .flac .ogg ở thư mục gốc hoặc /music
+- Đài radio sửa trong `kStations` (ltkk_music.cc): cần luồng MP3/AAC trực tiếp qua http(s)
 
 ## Thao tác chạm
-- Chạm 1 lần: bắt đầu / dừng trò chuyện
-- Chạm 2 lần: bắt đầu nghe
-- Vuốt xuống, hoặc giữ 1-3 giây: cài đặt nhanh
-- Giữ hơn 3 giây: vào chế độ cài Wi-Fi
-- Cảm ứng lệch: chỉnh `TOUCH_SWAP_XY / TOUCH_MIRROR_X / TOUCH_MIRROR_Y` trong `config.h`
+- Chạm 1 lần: bắt đầu / dừng trò chuyện; chạm 2 lần: bắt đầu nghe
+- Vuốt xuống / giữ 1-3 giây: cài đặt; vuốt ngang trên màn hình chờ: đổi kiểu
+- Giữ hơn 3 giây: cài Wi-Fi
+- Chấm cam hiện ở chỗ chạm (tắt bằng LTKK_TOUCH_DEBUG 0 trong ltkk_brand.h).
+  Nếu chấm lệch so với ngón tay: chỉnh TOUCH_SWAP_XY / TOUCH_MIRROR_X / TOUCH_MIRROR_Y trong config.h
 
 ## Build
 ```bash

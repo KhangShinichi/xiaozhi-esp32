@@ -19,6 +19,9 @@
 // 1 = dùng hình nền mạch điện LTKK cho giao diện tối, 0 = nền màu trơn
 #define LTKK_DARK_BACKGROUND_IMAGE 1
 
+// 1 = hiện chấm cam ở chỗ ngón tay chạm (để kiểm tra cảm ứng có lệch không)
+#define LTKK_TOUCH_DEBUG         1
+
 class Display;
 
 namespace ltkk {

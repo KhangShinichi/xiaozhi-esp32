@@ -145,7 +145,7 @@ private:
                 } else if (press > 3000) {
                     self->EnterWifiConfigMode();      // giữ hơn 3 giây: cài Wi-Fi
                 } else if (press > 1000) {
-                    self->display_->ToggleQuickSettings();  // giữ 1-3 giây: cài đặt nhanh
+                    self->display_->ToggleSettings();       // giữ 1-3 giây: mở cài đặt
                 } else if (now - last_tap < 250) {
                     app.StartListening();             // chạm 2 lần
                     last_tap = 0;
@@ -278,8 +278,9 @@ private:
 
         // --- Nhạc từ thẻ nhớ microSD
         mcp.AddTool("self.music.play",
-            "Play music (.ogg files) from the microSD card. Use when the user asks to play music "
-            "or a song. `name` is optional: part of the song title, empty for the next song. "
+            "Play music files (mp3, wav, aac, m4a, flac, ogg) from the microSD card. Use when the "
+            "user asks to play a song from the card. `name` is optional: part of the song title. "
+            "If the card has no songs, use self.radio.play instead. "
             "Music starts after you finish speaking; keep your reply short.",
             PropertyList({Property("name", kPropertyTypeString, std::string(""))}),
             [](const PropertyList& properties) -> ToolResult {
@@ -289,12 +290,12 @@ private:
                 }
                 return std::string("Playing: ") + music.CurrentTitle();
             });
-        mcp.AddTool("self.music.stop", "Stop the music.", PropertyList(),
+        mcp.AddTool("self.music.stop", "Stop the music or radio.", PropertyList(),
             [](const PropertyList& properties) -> ReturnValue {
                 LtkkMusic::GetInstance().Stop();
                 return true;
             });
-        mcp.AddTool("self.music.next", "Skip to the next song.", PropertyList(),
+        mcp.AddTool("self.music.next", "Skip to the next song or next radio station.", PropertyList(),
             [](const PropertyList& properties) -> ReturnValue {
                 LtkkMusic::GetInstance().Next();
                 return true;
@@ -312,6 +313,50 @@ private:
                     cJSON_AddItemToArray(arr, cJSON_CreateString(song.c_str()));
                 }
                 return arr;
+            });
+
+        // --- Radio trực tuyến
+        mcp.AddTool("self.radio.play",
+            "Play online radio / streaming music (lofi, chill, relax, focus stations). Use when "
+            "the user asks for online music, radio, or background music for studying. `station` "
+            "is optional (part of the station name, e.g. `lofi`, `chill`, `focus`). "
+            "YouTube and Spotify are not supported. Radio starts after you finish speaking.",
+            PropertyList({Property("station", kPropertyTypeString, std::string(""))}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& music = LtkkMusic::GetInstance();
+                music.PlayRadioByName(properties["station"].value<std::string>());
+                return std::string("Playing radio: ") + music.CurrentTitle();
+            });
+        mcp.AddTool("self.radio.play_url",
+            "Play an internet radio stream from a direct http(s) MP3 or AAC stream URL "
+            "(not .m3u8, not YouTube).",
+            PropertyList({Property("url", kPropertyTypeString),
+                          Property("name", kPropertyTypeString, std::string("Radio"))}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& music = LtkkMusic::GetInstance();
+                if (!music.PlayUrl(properties["url"].value<std::string>(),
+                                   properties["name"].value<std::string>())) {
+                    return std::unexpected(music.LastError());
+                }
+                return true;
+            });
+        mcp.AddTool("self.radio.list", "List the built-in online radio stations.", PropertyList(),
+            [](const PropertyList& properties) -> ReturnValue {
+                cJSON* arr = cJSON_CreateArray();
+                for (const auto& name : LtkkMusic::GetInstance().RadioList()) {
+                    cJSON_AddItemToArray(arr, cJSON_CreateString(name.c_str()));
+                }
+                return arr;
+            });
+
+        // --- Kiểu màn hình chờ
+        mcp.AddTool("self.screen.set_standby_style",
+            "Change the standby (idle) screen style: 0 = big digital clock, 1 = LTKK analog clock, "
+            "2 = sleeping Lu face, 3 = LTKK brand card.",
+            PropertyList({Property("style", kPropertyTypeInteger, 0, 0, 3)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                display_->SetStandbyStyle(properties["style"].value<int>());
+                return true;
             });
 
         // --- Thời tiết trên màn hình chờ
