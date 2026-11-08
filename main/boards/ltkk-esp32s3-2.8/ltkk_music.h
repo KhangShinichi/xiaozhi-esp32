@@ -36,6 +36,8 @@ public:
     bool SearchRadio(const std::string& query, const std::string& countrycode);
     // Bài hát theo tên qua máy chủ nhạc
     bool PlaySong(const std::string& song, const std::string& artist);
+    // Lu làm loa cho máy tính (âm thanh máy tính phát qua Wi-Fi, cần phần mềm LTKK)
+    bool PlayPcSpeaker();
     void SetMusicServer(const std::string& url);
     std::string GetMusicServer();
 
@@ -49,6 +51,7 @@ public:
     bool IsPending() const { return pending_.load(); }
     bool IsRadio() const { return mode_.load() == kModeRadio; }
     bool IsSong() const { return mode_.load() == kModeSong; }
+    bool IsSpeaker() const { return mode_.load() == kModeSpeaker; }
     bool IsBuffering() const { return buffering_.load(); }
     int ProgressPermille() const { return progress_.load(); }
     std::string CurrentTitle();
@@ -60,7 +63,7 @@ private:
     LtkkMusic() = default;
     bool Mount();
     void ScanLocked();
-    enum Mode { kModeSd, kModeRadio, kModeSong };
+    enum Mode { kModeSd, kModeRadio, kModeSong, kModeSpeaker };
     bool Request(Mode mode);
     std::string DiscoverServer();
     void EnsureTask();

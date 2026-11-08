@@ -846,17 +846,19 @@ void LtkkDisplay::CreateMusic(lv_obj_t* parent) {
 void LtkkDisplay::UpdateMusic() {
     auto& music = LtkkMusic::GetInstance();
     // 0 = thẻ nhớ, 1 = radio, 2 = bài hát trực tuyến; +10 khi đang kết nối
-    int mode = music.IsRadio() ? 1 : (music.IsSong() ? 2 : 0);
+    int mode = music.IsRadio() ? 1 : (music.IsSong() ? 2 : (music.IsSpeaker() ? 3 : 0));
     int key = mode + (music.IsBuffering() ? 10 : 0);
     if (key != music_mode_shown_) {
         music_mode_shown_ = key;
         lv_image_set_src(music_kind_img_, mode == 0   ? &ltkk_txt_music
                                           : mode == 1 ? &ltkk_txt_radio
-                                                      : &ltkk_txt_online);
+                                          : mode == 2 ? &ltkk_txt_online
+                                                      : &ltkk_txt_speaker);
         lv_image_set_src(music_sub_img_, music.IsBuffering() ? &ltkk_txt_connecting
                                          : mode == 0         ? &ltkk_txt_sdcard
                                          : mode == 1         ? &ltkk_txt_live
-                                                             : &ltkk_txt_server);
+                                         : mode == 2         ? &ltkk_txt_server
+                                                             : &ltkk_txt_speaker_sub);
         lv_image_set_src(music_art_icon_, mode == 1 ? &ltkk_icon_radio : &ltkk_icon_note);
         lv_image_set_scale(music_art_icon_, mode == 1 ? 420 : 256);
     }
@@ -1161,6 +1163,61 @@ void LtkkDisplay::CreateTouch() {
     lv_obj_set_style_border_color(touch_dot_, lv_color_hex(0xFFFFFF), 0);
     SetHidden(touch_dot_, true);
 #endif
+}
+
+void LtkkDisplay::ShowTouchCalibration(int step) {
+    DisplayLockGuard lock(this);
+    if (calib_panel_ == nullptr) {
+        calib_panel_ = Box(lv_layer_top());
+        lv_obj_set_size(calib_panel_, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_color(calib_panel_, lv_color_hex(0x081738), 0);
+        lv_obj_set_style_bg_opa(calib_panel_, LV_OPA_COVER, 0);
+        lv_obj_t* col = Column(calib_panel_, 6);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_width(col, LV_PCT(100));
+        lv_obj_align(col, LV_ALIGN_CENTER, 0, 0);
+        calib_text_ = Image(col, &ltkk_txt_cal_title);
+        Image(col, &ltkk_txt_cal_tap);
+        calib_step_label_ = Label(col, LTKK_COLOR_ORANGE);
+
+        // Dấu + : vòng tròn + 2 vạch
+        calib_target_ = Box(calib_panel_);
+        lv_obj_set_size(calib_target_, 40, 40);
+        lv_obj_t* ring = Box(calib_target_);
+        lv_obj_set_size(ring, 26, 26);
+        lv_obj_center(ring);
+        lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(ring, 3, 0);
+        lv_obj_set_style_border_color(ring, lv_color_hex(LTKK_COLOR_ORANGE), 0);
+        for (int i = 0; i < 2; i++) {
+            lv_obj_t* bar = Box(calib_target_);
+            lv_obj_set_size(bar, i == 0 ? 40 : 3, i == 0 ? 3 : 40);
+            lv_obj_center(bar);
+            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(bar, lv_color_hex(0xFFFFFF), 0);
+        }
+    }
+    if (step == 0) {
+        // Xong: báo 1,5 giây rồi ẩn
+        lv_image_set_src(calib_text_, &ltkk_txt_cal_done);
+        lv_label_set_text(calib_step_label_, "");
+        SetHidden(calib_target_, true);
+        lv_obj_fade_out(calib_panel_, 300, 1500);
+        return;
+    }
+    lv_anim_delete(calib_panel_, nullptr);
+    lv_obj_set_style_opa(calib_panel_, LV_OPA_COVER, 0);
+    lv_image_set_src(calib_text_, &ltkk_txt_cal_title);
+    lv_label_set_text_fmt(calib_step_label_, "%d / 2", step);
+    SetHidden(calib_target_, false);
+    // Dấu 1: góc trên-trái, dấu 2: góc dưới-phải
+    if (step == 1) {
+        lv_obj_set_pos(calib_target_, 30 - 20, 30 - 20);
+    } else {
+        lv_obj_set_pos(calib_target_, LV_HOR_RES - 30 - 20, LV_VER_RES - 30 - 20);
+    }
+    SetHidden(calib_panel_, false);
+    lv_obj_move_foreground(calib_panel_);
 }
 
 lv_obj_t* LtkkDisplay::FindTarget(int x, int y) {

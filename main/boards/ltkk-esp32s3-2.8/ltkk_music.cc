@@ -625,6 +625,26 @@ std::string LtkkMusic::DiscoverServer() {
     return found;
 }
 
+bool LtkkMusic::PlayPcSpeaker() {
+    std::string base = GetMusicServer();
+    std::string body;
+    if (base.empty() || !HttpGetText(base + "/list", body)) {
+        base = DiscoverServer();
+    }
+    if (base.empty()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_ = "Không tìm thấy phần mềm LTKK trên máy tính. Hãy bật Máy chủ nhạc (cùng mạng Wi-Fi).";
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_.clear();
+        custom_url_ = base + "/speaker.wav";
+        custom_name_ = "Loa máy tính";
+    }
+    return Request(kModeSpeaker);
+}
+
 bool LtkkMusic::PlaySong(const std::string& song, const std::string& artist) {
     std::string base = GetMusicServer();
     std::string body;
@@ -721,7 +741,7 @@ void LtkkMusic::TaskLoop() {
         while (!stop_.load()) {
             bool ok;
             int count;
-            if (mode_.load() == kModeSong) {
+            if (mode_.load() == kModeSong || mode_.load() == kModeSpeaker) {
                 std::string url;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);

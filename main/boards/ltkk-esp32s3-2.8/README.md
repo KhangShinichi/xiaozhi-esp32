@@ -38,7 +38,9 @@ Board này dùng chung sơ đồ chân với `freenove-esp32s3-display-2.8-lcd`.
 - Radio: "Lu ơi, mở đài VOV", "mở nhạc bolero", "mở radio jazz" -> tìm trong Radio Browser
   (danh bạ hơn 50.000 đài, miễn phí). Thêm "của Việt Nam" để ưu tiên đài trong nước.
 - Bài hát theo tên: "Lu ơi, mở bài Nơi này có anh" -> qua Máy chủ nhạc trong phần mềm
-  LTKK ESP Tool trên máy tính (cùng mạng Wi-Fi, Lu tự tìm thấy). Máy chủ khác cũng dùng được
+  LTKK ESP Tool trên máy tính (cùng mạng Wi-Fi, Lu tự tìm thấy): tìm trong thư viện nhạc
+  trên máy, không có thì mở trình phát YouTube chính thức trên máy tính và Lu làm loa.
+- Loa máy tính: "Lu ơi, làm loa cho máy tính". Máy chủ khác cũng dùng được
   nếu trả về JSON {title, artist, audio_url} ở đường dẫn /stream_pcm?song=&artist=.
 
 ## Nhạc & radio
@@ -50,6 +52,7 @@ Board này dùng chung sơ đồ chân với `freenove-esp32s3-display-2.8-lcd`.
 - Chạm 1 lần vào vùng trống: bắt đầu / dừng trò chuyện; chạm 2 lần: bắt đầu nghe
 - Vuốt xuống / giữ 1-3 giây: cài đặt; vuốt ngang trên màn hình chờ: đổi kiểu
 - Giữ hơn 3 giây: cài Wi-Fi
+- Giữ hơn 8 giây (hoặc nói "Lu ơi, hiệu chỉnh cảm ứng"): hiệu chỉnh cảm ứng - chạm 2 dấu +
 - Chấm cam hiện ở chỗ chạm (tắt bằng LTKK_TOUCH_DEBUG 0 trong ltkk_brand.h).
   Nếu chấm lệch so với ngón tay: chỉnh TOUCH_SWAP_XY / TOUCH_MIRROR_X / TOUCH_MIRROR_Y trong config.h
 

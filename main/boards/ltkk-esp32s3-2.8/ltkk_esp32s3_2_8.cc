@@ -27,11 +27,13 @@
 #include "system_reset.h"
 #include "esp_lcd_ili9341.h"
 #include "ltkk_brand.h"
+#include "settings.h"
 #include "ltkk_display.h"
 #include "ltkk_music.h"
 #include "ltkk_weather.h"
 #include <cJSON.h>
 #include <utility>
+#include <atomic>
 #include <cstdlib>
 
 #define TAG "LtkkEsp32S3"
@@ -83,20 +85,56 @@ private:
         adc_battery_monitor_ = new AdcBatteryMonitor(ADC_UNIT_1, ADC_CHANNEL_8, 200000, 200000, GPIO_NUM_NC);
     }
 
-    // Đổi toạ độ thô của FT6336G sang toạ độ màn hình (chỉnh trong config.h nếu bị lệch)
-    static void MapTouch(uint16_t rx, uint16_t ry, int &sx, int &sy) {
+    // Hướng cảm ứng: bit0 = đổi trục, bit1 = lật X, bit2 = lật Y.
+    // Mặc định lấy từ config.h, sau khi hiệu chỉnh thì lưu trong bộ nhớ (NVS "ltkk/touch").
+    std::atomic<int> touch_cfg_{(TOUCH_SWAP_XY ? 1 : 0) | (TOUCH_MIRROR_X ? 2 : 0) |
+                                (TOUCH_MIRROR_Y ? 4 : 0)};
+    std::atomic<int> calib_step_{0};  // 0 = bình thường, 1/2 = đang chờ chạm dấu + thứ 1/2
+    int calib_x1_ = 0, calib_y1_ = 0;
+
+    void MapTouch(uint16_t rx, uint16_t ry, int &sx, int &sy) {
+        int cfg = touch_cfg_.load();
         int x = rx, y = ry;
-#if TOUCH_SWAP_XY
-        std::swap(x, y);
-#endif
-#if TOUCH_MIRROR_X
-        x = DISPLAY_WIDTH - 1 - x;
-#endif
-#if TOUCH_MIRROR_Y
-        y = DISPLAY_HEIGHT - 1 - y;
-#endif
+        if (cfg & 1) std::swap(x, y);
+        if (cfg & 2) x = DISPLAY_WIDTH - 1 - x;
+        if (cfg & 4) y = DISPLAY_HEIGHT - 1 - y;
         sx = x < 0 ? 0 : (x >= DISPLAY_WIDTH ? DISPLAY_WIDTH - 1 : x);
         sy = y < 0 ? 0 : (y >= DISPLAY_HEIGHT ? DISPLAY_HEIGHT - 1 : y);
+    }
+
+public:
+    // Hiệu chỉnh cảm ứng: chạm 2 dấu + ở hai góc, tự tính hướng đúng
+    void StartTouchCalibration() {
+        calib_step_ = 1;
+        display_->ShowTouchCalibration(1);
+    }
+
+private:
+    void OnCalibrationTap(int rx, int ry) {
+        if (calib_step_ == 1) {
+            calib_x1_ = rx;
+            calib_y1_ = ry;
+            calib_step_ = 2;
+            display_->ShowTouchCalibration(2);
+            return;
+        }
+        int dxr = rx - calib_x1_, dyr = ry - calib_y1_;
+        if (abs(dxr) < 60 && abs(dyr) < 60) {  // chạm quá gần nhau: làm lại
+            calib_step_ = 1;
+            display_->ShowTouchCalibration(1);
+            return;
+        }
+        // Dấu 1 ở góc trên-trái, dấu 2 ở góc dưới-phải màn hình ngang
+        bool swap = abs(dyr) > abs(dxr);
+        int along_x = swap ? dyr : dxr;
+        int along_y = swap ? dxr : dyr;
+        int cfg = (swap ? 1 : 0) | (along_x < 0 ? 2 : 0) | (along_y < 0 ? 4 : 0);
+        touch_cfg_ = cfg;
+        Settings settings("ltkk", true);
+        settings.SetInt("touch", cfg);
+        calib_step_ = 0;
+        ESP_LOGI(TAG, "Touch calibrated: cfg=%d (raw d=%d,%d)", cfg, dxr, dyr);
+        display_->ShowTouchCalibration(0);
     }
 
     static void TouchTask(void *arg) {
@@ -108,6 +146,7 @@ private:
         uint32_t down_start = 0;
         bool down = false;
         int start_x = 0, start_y = 0, last_x = 0, last_y = 0;
+        int raw_x = 0, raw_y = 0;
         int logged = 0;
 
         while (true) {
@@ -118,7 +157,9 @@ private:
 
             if (t) {
                 int sx, sy;
-                MapTouch(x, y, sx, sy);
+                self->MapTouch(x, y, sx, sy);
+                raw_x = x;
+                raw_y = y;
                 last_x = sx;
                 last_y = sy;
                 if (!down) {
@@ -131,7 +172,7 @@ private:
                         ESP_LOGI(TAG, "Touch raw=(%d,%d) screen=(%d,%d)", x, y, sx, sy);
                     }
                 }
-                if (ui != nullptr) {
+                if (ui != nullptr && self->calib_step_.load() == 0) {
                     ui->HandlePress(true, sx, sy);
                 }
             } else if (down) {
@@ -140,6 +181,15 @@ private:
                 int dx = last_x - start_x;
                 int dy = last_y - start_y;
                 bool handled = false;
+                if (self->calib_step_.load() != 0) {
+                    self->OnCalibrationTap(raw_x, raw_y);  // đang hiệu chỉnh: dùng toạ độ thô
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                    continue;
+                }
+                if (press > 8000) {
+                    self->StartTouchCalibration();  // giữ hơn 8 giây: hiệu chỉnh cảm ứng
+                    continue;
+                }
                 if (ui != nullptr) {
                     ui->HandlePress(false, last_x, last_y);
                     // Vuốt: ưu tiên trước chạm
@@ -342,8 +392,10 @@ private:
                 return std::string("Playing radio: ") + music.CurrentTitle();
             });
         mcp.AddTool("self.music.play_song",
-            "Play a specific song by name (online, via the user's LTKK music server). Use when the "
-            "user asks for a particular song or artist, e.g. 'mở bài Nơi này có anh'. "
+            "Play a specific song by name. Use whenever the user asks for a particular song or "
+            "artist, e.g. 'mở bài Nơi này có anh'. The LTKK app on the user's computer looks in "
+            "the user's music library first, otherwise opens the song in the official YouTube "
+            "player on the computer and streams its sound to this device. "
             "`song_name` is required, `artist_name` optional. If this fails, suggest radio. "
             "The song starts after you finish speaking; keep your reply short.",
             PropertyList({Property("song_name", kPropertyTypeString),
@@ -355,6 +407,18 @@ private:
                     return std::unexpected(music.LastError());
                 }
                 return std::string("Playing: ") + music.CurrentTitle();
+            });
+        mcp.AddTool("self.music.pc_speaker",
+            "Use this device as a wireless speaker for the user's computer (plays whatever sound "
+            "the computer is playing: YouTube in the browser, Spotify app, videos...). Use when the "
+            "user says 'làm loa cho máy tính' or wants to hear the computer's sound here.",
+            PropertyList(),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& music = LtkkMusic::GetInstance();
+                if (!music.PlayPcSpeaker()) {
+                    return std::unexpected(music.LastError());
+                }
+                return true;
             });
         mcp.AddTool("self.radio.search",
             "Search the worldwide online radio directory and play the best match. `query` is a "
@@ -400,6 +464,15 @@ private:
                 return arr;
             });
 
+        mcp.AddTool("self.screen.calibrate_touch",
+            "Start touch screen calibration (two + targets to tap). Use when the user says touches "
+            "are inverted, mirrored, misaligned, or asks to calibrate the touch screen.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                StartTouchCalibration();
+                return true;
+            });
+
         // --- Kiểu màn hình chờ
         mcp.AddTool("self.screen.set_standby_style",
             "Change the standby (idle) screen style: 0 = big digital clock, 1 = LTKK analog clock, "
@@ -435,6 +508,13 @@ private:
 public:
     LtkkEsp32S3Display(): boot_button_(BOOT_BUTTON_GPIO)
     {
+        {
+            Settings settings("ltkk", false);
+            int saved = settings.GetInt("touch", -1);
+            if (saved >= 0 && saved <= 7) {
+                touch_cfg_ = saved;
+            }
+        }
         InitializeI2c();
         InitializeBatteryMonitor();
         InitializeSpi();

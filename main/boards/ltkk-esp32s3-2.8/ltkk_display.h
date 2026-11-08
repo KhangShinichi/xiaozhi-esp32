@@ -47,6 +47,8 @@ public:
     void HandlePress(bool down, int x, int y);   // hiệu ứng nhấn + chấm kiểm tra
     bool HandleTap(int x, int y);
     bool HandleSwipe(Swipe dir);
+    // Màn hình hiệu chỉnh cảm ứng: step 1/2 = hiện dấu + thứ 1/2, 0 = xong
+    void ShowTouchCalibration(int step);
     void ToggleSettings();
 
 private:
@@ -156,6 +158,10 @@ private:
     // Cảm ứng
     lv_obj_t* touch_dot_ = nullptr;
     lv_obj_t* pressed_obj_ = nullptr;
+    lv_obj_t* calib_panel_ = nullptr;
+    lv_obj_t* calib_target_ = nullptr;
+    lv_obj_t* calib_step_label_ = nullptr;
+    lv_obj_t* calib_text_ = nullptr;
 
     lv_timer_t* tick_timer_ = nullptr;
     int last_state_ = -1;

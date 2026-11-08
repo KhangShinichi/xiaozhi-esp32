@@ -108,6 +108,11 @@ extern const lv_image_dsc_t ltkk_txt_live;
 extern const lv_image_dsc_t ltkk_txt_connecting;
 extern const lv_image_dsc_t ltkk_txt_swipe;
 extern const lv_image_dsc_t ltkk_txt_online;
+extern const lv_image_dsc_t ltkk_txt_cal_title;
+extern const lv_image_dsc_t ltkk_txt_cal_tap;
+extern const lv_image_dsc_t ltkk_txt_cal_done;
+extern const lv_image_dsc_t ltkk_txt_speaker;
+extern const lv_image_dsc_t ltkk_txt_speaker_sub;
 extern const lv_image_dsc_t ltkk_txt_server;
 
 #ifdef __cplusplus
