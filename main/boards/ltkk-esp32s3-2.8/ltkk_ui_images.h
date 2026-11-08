@@ -7,7 +7,9 @@ extern "C" {
 #endif
 
 extern const lv_image_dsc_t ltkk_eyes_neutral;
+extern const lv_image_dsc_t ltkk_eyes_blink;
 extern const lv_image_dsc_t ltkk_eyes_listen;
+extern const lv_image_dsc_t ltkk_eyes_listen_blink;
 extern const lv_image_dsc_t ltkk_eyes_happy;
 extern const lv_image_dsc_t ltkk_eyes_think;
 extern const lv_image_dsc_t ltkk_eyes_surprise;
@@ -16,6 +18,8 @@ extern const lv_image_dsc_t ltkk_eyes_angry;
 extern const lv_image_dsc_t ltkk_eyes_love;
 extern const lv_image_dsc_t ltkk_eyes_sleepy;
 extern const lv_image_dsc_t ltkk_eyes_wink;
+extern const lv_image_dsc_t ltkk_eyes_shy;
+extern const lv_image_dsc_t ltkk_eyes_confused;
 extern const lv_image_dsc_t ltkk_digit_0;
 extern const lv_image_dsc_t ltkk_digit_1;
 extern const lv_image_dsc_t ltkk_digit_2;
@@ -114,6 +118,16 @@ extern const lv_image_dsc_t ltkk_txt_cal_done;
 extern const lv_image_dsc_t ltkk_txt_speaker;
 extern const lv_image_dsc_t ltkk_txt_speaker_sub;
 extern const lv_image_dsc_t ltkk_txt_server;
+extern const lv_image_dsc_t ltkk_emo_happy;
+extern const lv_image_dsc_t ltkk_emo_sad;
+extern const lv_image_dsc_t ltkk_emo_angry;
+extern const lv_image_dsc_t ltkk_emo_love;
+extern const lv_image_dsc_t ltkk_emo_surprise;
+extern const lv_image_dsc_t ltkk_emo_think;
+extern const lv_image_dsc_t ltkk_emo_sleepy;
+extern const lv_image_dsc_t ltkk_emo_wink;
+extern const lv_image_dsc_t ltkk_emo_shy;
+extern const lv_image_dsc_t ltkk_emo_confused;
 
 #ifdef __cplusplus
 }

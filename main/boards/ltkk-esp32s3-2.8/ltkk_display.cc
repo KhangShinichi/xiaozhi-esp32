@@ -43,6 +43,7 @@ constexpr uint32_t kCyan = 0x38C8F5;
 constexpr uint32_t kSoft = 0xC8DCFF;
 constexpr uint32_t kTrack = 0x2A3F75;
 constexpr uint32_t kTile = 0x14306E;
+constexpr uint32_t kOrange = 0xFF7A1A;
 
 const lv_image_dsc_t* const kDigits[10] = {
     &ltkk_digit_0, &ltkk_digit_1, &ltkk_digit_2, &ltkk_digit_3, &ltkk_digit_4,
@@ -59,31 +60,40 @@ const lv_image_dsc_t* const kStyleNames[LtkkDisplay::kStandbyStyles] = {
     &ltkk_style_0, &ltkk_style_1, &ltkk_style_2, &ltkk_style_3,
 };
 
+// Cảm xúc của mô hình -> khuôn mặt Lu + nhãn tiếng Việt (nullptr = không hiện nhãn)
 struct EmotionMap {
     const char* name;
     const lv_image_dsc_t* eyes;
+    const lv_image_dsc_t* label;
 };
 const EmotionMap kEmotions[] = {
-    {"neutral", &ltkk_eyes_neutral},    {"happy", &ltkk_eyes_happy},
-    {"laughing", &ltkk_eyes_happy},     {"funny", &ltkk_eyes_happy},
-    {"delicious", &ltkk_eyes_happy},    {"confident", &ltkk_eyes_happy},
-    {"cool", &ltkk_eyes_happy},         {"relaxed", &ltkk_eyes_happy},
-    {"embarrassed", &ltkk_eyes_happy},  {"sad", &ltkk_eyes_sad},
-    {"crying", &ltkk_eyes_sad},         {"angry", &ltkk_eyes_angry},
-    {"loving", &ltkk_eyes_love},        {"kissy", &ltkk_eyes_love},
-    {"surprised", &ltkk_eyes_surprise}, {"shocked", &ltkk_eyes_surprise},
-    {"thinking", &ltkk_eyes_think},     {"confused", &ltkk_eyes_think},
-    {"winking", &ltkk_eyes_wink},       {"silly", &ltkk_eyes_wink},
-    {"sleepy", &ltkk_eyes_sleepy},
+    {"neutral", &ltkk_eyes_neutral, nullptr},
+    {"happy", &ltkk_eyes_happy, &ltkk_emo_happy},
+    {"laughing", &ltkk_eyes_happy, &ltkk_emo_happy},
+    {"funny", &ltkk_eyes_happy, &ltkk_emo_happy},
+    {"delicious", &ltkk_eyes_happy, &ltkk_emo_happy},
+    {"confident", &ltkk_eyes_wink, &ltkk_emo_wink},
+    {"cool", &ltkk_eyes_wink, &ltkk_emo_wink},
+    {"relaxed", &ltkk_eyes_happy, &ltkk_emo_happy},
+    {"embarrassed", &ltkk_eyes_shy, &ltkk_emo_shy},
+    {"sad", &ltkk_eyes_sad, &ltkk_emo_sad},
+    {"crying", &ltkk_eyes_sad, &ltkk_emo_sad},
+    {"angry", &ltkk_eyes_angry, &ltkk_emo_angry},
+    {"loving", &ltkk_eyes_love, &ltkk_emo_love},
+    {"kissy", &ltkk_eyes_love, &ltkk_emo_love},
+    {"surprised", &ltkk_eyes_surprise, &ltkk_emo_surprise},
+    {"shocked", &ltkk_eyes_surprise, &ltkk_emo_surprise},
+    {"thinking", &ltkk_eyes_think, &ltkk_emo_think},
+    {"confused", &ltkk_eyes_confused, &ltkk_emo_confused},
+    {"winking", &ltkk_eyes_wink, &ltkk_emo_wink},
+    {"silly", &ltkk_eyes_wink, &ltkk_emo_wink},
+    {"sleepy", &ltkk_eyes_sleepy, &ltkk_emo_sleepy},
 };
 
 inline int32_t Triangle(int32_t v, int32_t range) { return v <= range ? v : 2 * range - v; }
 
 void WaveExec(void* var, int32_t v) {
     lv_obj_set_height(static_cast<lv_obj_t*>(var), 6 + Triangle(v, 30));
-}
-void BlinkExec(void* var, int32_t v) {
-    lv_image_set_scale_y(static_cast<lv_obj_t*>(var), 256 - Triangle(v, 228));
 }
 void BreatheExec(void* var, int32_t v) {
     lv_obj_set_style_translate_y(static_cast<lv_obj_t*>(var), Triangle(v, 8) - 4, 0);
@@ -234,6 +244,36 @@ void LtkkDisplay::CreateFace() {
     SetEyes(&ltkk_eyes_neutral);
     speaking_eyes_ = &ltkk_eyes_neutral;
     next_blink_ms_ = lv_tick_get() + 3000;
+
+    // Nhãn cảm xúc tiếng Việt (VUI, BUỒN, GIẬN...) - hiện 2,5 giây khi đổi cảm xúc
+    lv_obj_t* screen = lv_screen_active();
+    emo_tag_ = Box(screen);
+    lv_obj_set_size(emo_tag_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(emo_tag_, 10, 0);
+    lv_obj_set_style_pad_ver(emo_tag_, 3, 0);
+    lv_obj_set_style_radius(emo_tag_, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(emo_tag_, lv_color_hex(kOrange), 0);
+    lv_obj_set_style_bg_opa(emo_tag_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(emo_tag_, 2, 0);
+    lv_obj_set_style_border_color(emo_tag_, lv_color_hex(0xFFFFFF), 0);
+    emo_tag_img_ = lv_image_create(emo_tag_);
+    lv_image_set_src(emo_tag_img_, &ltkk_emo_happy);
+    SetHidden(emo_tag_, true);
+}
+
+void LtkkDisplay::ShowEmotionTag(const lv_image_dsc_t* label) {
+    if (emo_tag_ == nullptr) {
+        return;
+    }
+    if (label == nullptr) {
+        SetHidden(emo_tag_, true);
+        return;
+    }
+    lv_image_set_src(emo_tag_img_, label);
+    lv_obj_align_to(emo_tag_, emoji_box_, LV_ALIGN_OUT_BOTTOM_MID, 0, -14);
+    lv_obj_move_to_index(emo_tag_, -1);
+    SetHidden(emo_tag_, false);
+    emo_tag_until_ms_ = lv_tick_get() + 2500;
 }
 
 void LtkkDisplay::SetEyes(const lv_image_dsc_t* eyes) {
@@ -241,23 +281,21 @@ void LtkkDisplay::SetEyes(const lv_image_dsc_t* eyes) {
         return;
     }
     current_eyes_ = eyes;
-    lv_anim_delete(face_, BlinkExec);
-    lv_image_set_scale_y(face_, 256);
+    blink_until_ms_ = 0;
     lv_image_set_src(face_, eyes);
     lv_obj_set_size(face_, eyes->header.w, eyes->header.h);
     lv_image_set_pivot(face_, eyes->header.w / 2, eyes->header.h / 2);
-    blink_enabled_ = (eyes == &ltkk_eyes_neutral || eyes == &ltkk_eyes_listen ||
-                      eyes == &ltkk_eyes_think || eyes == &ltkk_eyes_surprise);
+    // Khi nghe: thu nhỏ Lu để chừa chỗ cho sóng âm
+    lv_image_set_scale(face_, eyes == &ltkk_eyes_listen ? 210 : 256);
+    blink_enabled_ = (eyes == &ltkk_eyes_neutral || eyes == &ltkk_eyes_listen);
 }
 
+// Chớp mắt: đổi sang ảnh nhắm mắt trong một nhịp (~200 ms) rồi trả lại
 void LtkkDisplay::Blink() {
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, face_);
-    lv_anim_set_exec_cb(&a, BlinkExec);
-    lv_anim_set_values(&a, 0, 456);
-    lv_anim_set_duration(&a, 220);
-    lv_anim_start(&a);
+    const lv_image_dsc_t* closed =
+        current_eyes_ == &ltkk_eyes_listen ? &ltkk_eyes_listen_blink : &ltkk_eyes_blink;
+    lv_image_set_src(face_, closed);
+    blink_until_ms_ = lv_tick_get() + 150;
 }
 
 bool LtkkDisplay::SetEmotion(const char* emotion) {
@@ -268,17 +306,23 @@ bool LtkkDisplay::SetEmotion(const char* emotion) {
         return false;
     }
     const lv_image_dsc_t* eyes = &ltkk_eyes_neutral;
+    const lv_image_dsc_t* label = nullptr;
     for (const auto& e : kEmotions) {
         if (strcmp(e.name, emotion) == 0) {
             eyes = e.eyes;
+            label = e.label;
             break;
         }
     }
     DisplayLockGuard lock(this);
+    bool changed = eyes != speaking_eyes_;
     speaking_eyes_ = eyes;
     auto state = Application::GetInstance().GetDeviceState();
     if (state != kDeviceStateListening && state != kDeviceStateConnecting) {
         SetEyes(eyes);
+        if (changed) {
+            ShowEmotionTag(label);
+        }
     }
     return true;
 }
@@ -288,7 +332,7 @@ void LtkkDisplay::CreateWave() {
     lv_obj_t* screen = lv_screen_active();
     wave_box_ = Box(screen);
     lv_obj_set_size(wave_box_, LV_PCT(100), 40);
-    lv_obj_align(wave_box_, LV_ALIGN_CENTER, 0, 34);
+    lv_obj_align(wave_box_, LV_ALIGN_CENTER, 0, 38);
     lv_obj_set_flex_flow(wave_box_, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(wave_box_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
@@ -567,8 +611,8 @@ void LtkkDisplay::UpdateAnalog(const struct tm& t) {
 
 // Kiểu 2: Lu ngủ - đôi mắt thở nhẹ, giờ nhỏ bên dưới
 void LtkkDisplay::CreateStyleSleepy(lv_obj_t* panel) {
-    sleepy_face_ = Image(panel, &ltkk_eyes_sleepy);
-    lv_obj_align(sleepy_face_, LV_ALIGN_CENTER, 0, -44);
+    sleepy_face_ = ScaledImage(panel, &ltkk_eyes_sleepy, 0.78f);
+    lv_obj_align(sleepy_face_, LV_ALIGN_CENTER, 0, -50);
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, sleepy_face_);
@@ -581,7 +625,7 @@ void LtkkDisplay::CreateStyleSleepy(lv_obj_t* panel) {
     lv_obj_t* col = Column(panel, 4);
     lv_obj_set_width(col, LV_PCT(100));
     lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(col, LV_ALIGN_CENTER, 0, 22);
+    lv_obj_align(col, LV_ALIGN_CENTER, 0, 34);
     CreateDigits(col, clock_digits_[2], 0.5f);
     CreateInfo(col, info_[2], true);
     SetHidden(info_[2].weather, true);
@@ -1397,7 +1441,8 @@ void LtkkDisplay::OnTick() {
     if (state_changed && face_ != nullptr) {
         if (listening) {
             SetEyes(&ltkk_eyes_listen);
-            lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, -28);
+            ShowEmotionTag(nullptr);
+            lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, -32);
             SetHidden(wave_box_, false);
             SetHidden(listening_label_, false);
         } else {
@@ -1413,7 +1458,16 @@ void LtkkDisplay::OnTick() {
             }
         }
     }
-    if (face_ != nullptr && !idle && blink_enabled_ && (int32_t)(now_ms - next_blink_ms_) >= 0) {
+    if (face_ != nullptr && blink_until_ms_ != 0 && (int32_t)(now_ms - blink_until_ms_) >= 0) {
+        blink_until_ms_ = 0;
+        lv_image_set_src(face_, current_eyes_);   // mở mắt lại
+    }
+    if (emo_tag_ != nullptr && emo_tag_until_ms_ != 0 && (int32_t)(now_ms - emo_tag_until_ms_) >= 0) {
+        emo_tag_until_ms_ = 0;
+        SetHidden(emo_tag_, true);
+    }
+    if (face_ != nullptr && !idle && blink_enabled_ && blink_until_ms_ == 0 &&
+        (int32_t)(now_ms - next_blink_ms_) >= 0) {
         Blink();
         next_blink_ms_ = now_ms + 3000 + esp_random() % 3000;
     }

@@ -4,7 +4,7 @@
 //  Khởi động : logo LTKK + "Học để làm"                     (ltkk_brand.cc)
 //  Chờ       : 4 kiểu - Đồng hồ / Kim LTKK / Lu ngủ / Thẻ LTKK (vuốt ngang để đổi)
 //  Đang nghe : mắt mở to + sóng âm + "Lu đang nghe nè…"
-//  Đang nói  : 10 biểu cảm + khung phụ đề có nhãn LU / BẠN
+//  Đang nói  : nhân vật Lu 12 cảm xúc + nhãn tiếng Việt (VUI, BUỒN...) + phụ đề LU / BẠN
 //  Hẹn giờ   : vòng đếm ngược, nút Tạm dừng / Huỷ
 //  Nhạc      : thẻ microSD (mp3/wav/aac/m4a/flac/ogg) + radio trực tuyến
 //  Cài Wi-Fi : mã QR + 3 bước
@@ -67,6 +67,10 @@ private:
     const lv_image_dsc_t* speaking_eyes_ = nullptr;
     bool blink_enabled_ = true;
     uint32_t next_blink_ms_ = 0;
+    uint32_t blink_until_ms_ = 0;
+    lv_obj_t* emo_tag_ = nullptr;      // nhãn cảm xúc tiếng Việt
+    lv_obj_t* emo_tag_img_ = nullptr;
+    uint32_t emo_tag_until_ms_ = 0;
 
     // Sóng âm khi nghe
     lv_obj_t* wave_box_ = nullptr;
@@ -193,6 +197,7 @@ private:
     // Cập nhật
     void SetEyes(const lv_image_dsc_t* eyes);
     void Blink();
+    void ShowEmotionTag(const lv_image_dsc_t* label);
     void SetDigits(lv_obj_t* const* slots, int a, int b);
     void ShowStandbyStyle(int style);
     void UpdateClock(bool force);
