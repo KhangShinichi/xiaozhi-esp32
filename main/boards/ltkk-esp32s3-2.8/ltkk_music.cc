@@ -351,6 +351,31 @@ std::string LtkkMusic::CurrentTitle() {
     return TitleOf(files_[index_ % files_.size()]);
 }
 
+std::string LtkkMusic::CurrentArtist() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return mode_.load() == kModeSong ? custom_artist_ : std::string();
+}
+
+void LtkkMusic::SetCover(std::string data) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (data.empty() && cover_.empty()) {
+            return;
+        }
+        cover_ = std::move(data);
+    }
+    cover_version_++;
+}
+
+bool LtkkMusic::CopyCover(uint8_t* dst, size_t size) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (dst == nullptr || cover_.size() != kCoverBytes || size < kCoverBytes) {
+        return false;
+    }
+    memcpy(dst, cover_.data(), kCoverBytes);
+    return true;
+}
+
 std::string LtkkMusic::LastError() {
     std::lock_guard<std::mutex> lock(mutex_);
     return error_;
@@ -435,6 +460,15 @@ bool LtkkMusic::Request(Mode mode) {
     stop_ = false;
     skip_ = 0;
     paused_ = false;
+    if (mode != kModeSong) {
+        // chỉ bài hát từ máy chủ nhạc mới có ca sĩ / ảnh bìa
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            custom_artist_.clear();
+        }
+        youtube_ = false;
+        SetCover("");
+    }
     mode_ = mode;
     pending_ = true;
     EnsureTask();
@@ -662,19 +696,37 @@ bool LtkkMusic::PlaySong(const std::string& song, const std::string& artist) {
         return false;
     }
     cJSON* root = cJSON_Parse(body.c_str());
-    std::string audio, title;
+    std::string audio, title, found_artist, cover_url;
+    bool youtube = false;
     if (root != nullptr) {
         cJSON* a = cJSON_GetObjectItem(root, "audio_url");
         cJSON* t = cJSON_GetObjectItem(root, "title");
         cJSON* ar = cJSON_GetObjectItem(root, "artist");
+        cJSON* src = cJSON_GetObjectItem(root, "source");
+        cJSON* cv = cJSON_GetObjectItem(root, "cover");
         if (cJSON_IsString(a)) {
             audio = a->valuestring;
         }
         title = cJSON_IsString(t) ? t->valuestring : song;
-        if (cJSON_IsString(ar) && strlen(ar->valuestring) > 0) {
-            title += std::string(" - ") + ar->valuestring;
+        if (cJSON_IsString(ar)) {
+            found_artist = ar->valuestring;
+        }
+        youtube = (cJSON_IsString(src) && strcmp(src->valuestring, "youtube") == 0) ||
+                  found_artist == "YouTube";
+        if (cJSON_IsString(cv) && cv->valuestring[0] != '\0') {
+            cover_url = cv->valuestring;
         }
         cJSON_Delete(root);
+    }
+    // Ảnh bìa (tuỳ chọn): RGB565 112x112 thô, máy chủ đã thu nhỏ sẵn
+    std::string cover;
+    if (!audio.empty() && !cover_url.empty()) {
+        if (cover_url[0] == '/') {
+            cover_url = base + cover_url;
+        }
+        if (!HttpGetText(cover_url, cover) || cover.size() != kCoverBytes) {
+            cover.clear();
+        }
     }
     if (audio.empty()) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -689,7 +741,10 @@ bool LtkkMusic::PlaySong(const std::string& song, const std::string& artist) {
         error_.clear();
         custom_url_ = audio;
         custom_name_ = title;
+        custom_artist_ = (found_artist == "YouTube") ? std::string() : found_artist;
     }
+    youtube_ = youtube;
+    SetCover(std::move(cover));
     return Request(kModeSong);
 }
 

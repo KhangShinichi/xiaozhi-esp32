@@ -488,10 +488,44 @@ private:
         // --- Kiểu màn hình chờ
         mcp.AddTool("self.screen.set_standby_style",
             "Change the standby (idle) screen style: 0 = big digital clock, 1 = LTKK analog clock, "
-            "2 = sleeping Lu face, 3 = LTKK brand card.",
-            PropertyList({Property("style", kPropertyTypeInteger, 0, 0, 3)}),
+            "2 = sleeping Lu, 3 = LTKK brand card, 4 = Lu & you (Lu face + greeting), "
+            "5 = weather card, 6 = calendar, 7 = night (black, dim, for sleeping).",
+            PropertyList({Property("style", kPropertyTypeInteger, 0, 0, 7)}),
             [this](const PropertyList& properties) -> ReturnValue {
                 display_->SetStandbyStyle(properties["style"].value<int>());
+                return true;
+            });
+        mcp.AddTool("self.screen.customize_standby",
+            "Customize what the CURRENT standby style shows. Each option: 1 = on, 0 = off, "
+            "-1 = keep. `weather` = weather chip, `date` = weekday and date, `seconds` = seconds "
+            "(blinking colon / seconds bar / second hand), `plain_background` = plain dark "
+            "background instead of the LTKK picture. Set `open_editor` = 1 to open the on-screen "
+            "customization panel instead.",
+            PropertyList({Property("weather", kPropertyTypeInteger, -1, -1, 1),
+                          Property("date", kPropertyTypeInteger, -1, -1, 1),
+                          Property("seconds", kPropertyTypeInteger, -1, -1, 1),
+                          Property("plain_background", kPropertyTypeInteger, -1, -1, 1),
+                          Property("open_editor", kPropertyTypeInteger, 0, 0, 1)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                if (properties["open_editor"].value<int>() == 1) {
+                    display_->OpenStandbyEditor();
+                    return true;
+                }
+                int style = display_->GetStandbyStyle();
+                uint8_t o = display_->GetStandbyOptions(style);
+                auto apply = [&](const char* name, uint8_t bit) {
+                    int v = properties[name].value<int>();
+                    if (v == 1) {
+                        o |= bit;
+                    } else if (v == 0) {
+                        o &= ~bit;
+                    }
+                };
+                apply("weather", LtkkDisplay::kOptWeather);
+                apply("date", LtkkDisplay::kOptDate);
+                apply("seconds", LtkkDisplay::kOptSeconds);
+                apply("plain_background", LtkkDisplay::kOptPlain);
+                display_->SetStandbyOptions(style, o);
                 return true;
             });
 

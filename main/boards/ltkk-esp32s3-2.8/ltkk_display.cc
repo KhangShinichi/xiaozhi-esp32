@@ -35,6 +35,9 @@ bool qrcodegen_encodeText(const char* text, uint8_t temp_buffer[], uint8_t qrcod
                           int min_version, int max_version, int mask, bool boost_ecl);
 int qrcodegen_getSize(const uint8_t qrcode[]);
 bool qrcodegen_getModule(const uint8_t qrcode[], int x, int y);
+
+// LVGL: bỏ ảnh đã giải mã khỏi bộ nhớ đệm (ảnh bìa đổi nội dung nhưng giữ địa chỉ)
+void lv_image_cache_drop(const void* src);
 }
 
 namespace {
@@ -58,6 +61,29 @@ const lv_image_dsc_t* const kWeather[6] = {
 };
 const lv_image_dsc_t* const kStyleNames[LtkkDisplay::kStandbyStyles] = {
     &ltkk_style_0, &ltkk_style_1, &ltkk_style_2, &ltkk_style_3,
+    &ltkk_style_4, &ltkk_style_5, &ltkk_style_6, &ltkk_style_7,
+};
+const lv_image_dsc_t* const kStyleBig[LtkkDisplay::kStandbyStyles] = {
+    &ltkk_stylebig_0, &ltkk_stylebig_1, &ltkk_stylebig_2, &ltkk_stylebig_3,
+    &ltkk_stylebig_4, &ltkk_stylebig_5, &ltkk_stylebig_6, &ltkk_stylebig_7,
+};
+const lv_image_dsc_t* const kWeatherBig[6] = {
+    &ltkk_wxbig_0, &ltkk_wxbig_1, &ltkk_wxbig_2, &ltkk_wxbig_3, &ltkk_wxbig_4, &ltkk_wxbig_5,
+};
+// Lời chào: sáng / trưa / chiều / tối / khuya
+const lv_image_dsc_t* const kGreetings[5] = {
+    &ltkk_greet_0, &ltkk_greet_1, &ltkk_greet_2, &ltkk_greet_3, &ltkk_greet_4,
+};
+// Tuỳ chọn mặc định của từng kiểu màn hình chờ
+constexpr uint8_t kDefaultOpts[LtkkDisplay::kStandbyStyles] = {
+    LtkkDisplay::kOptWeather | LtkkDisplay::kOptDate,                              // Đồng hồ
+    LtkkDisplay::kOptWeather | LtkkDisplay::kOptDate | LtkkDisplay::kOptSeconds,   // Kim LTKK
+    LtkkDisplay::kOptDate,                                                         // Lu ngủ
+    LtkkDisplay::kOptWeather | LtkkDisplay::kOptDate,                              // Thẻ LTKK
+    LtkkDisplay::kOptWeather | LtkkDisplay::kOptDate,                              // Lu & bạn
+    LtkkDisplay::kOptWeather | LtkkDisplay::kOptDate,                              // Thời tiết
+    LtkkDisplay::kOptWeather | LtkkDisplay::kOptDate,                              // Lịch
+    LtkkDisplay::kOptDate | LtkkDisplay::kOptPlain,                                // Ban đêm
 };
 
 // Cảm xúc của mô hình -> khuôn mặt Lu + nhãn tiếng Việt (nullptr = không hiện nhãn)
@@ -116,6 +142,9 @@ inline int32_t Triangle(int32_t v, int32_t range) { return v <= range ? v : 2 * 
 
 void WaveExec(void* var, int32_t v) {
     lv_obj_set_height(static_cast<lv_obj_t*>(var), 6 + Triangle(v, 30));
+}
+void EqExec(void* var, int32_t v) {
+    lv_obj_set_height(static_cast<lv_obj_t*>(var), 4 + Triangle(v, 16));
 }
 void BreatheExec(void* var, int32_t v) {
     lv_obj_set_style_translate_y(static_cast<lv_obj_t*>(var), Triangle(v, 8) - 4, 0);
@@ -191,6 +220,10 @@ LtkkDisplay::LtkkDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
     Settings settings("ltkk", false);
     int style = settings.GetInt("standby", 0);
     standby_style_ = (style >= 0 && style < kStandbyStyles) ? style : 0;
+    for (int i = 0; i < kStandbyStyles; i++) {
+        int o = settings.GetInt("sbopt" + std::to_string(i), kDefaultOpts[i]);
+        standby_opts_[i] = (uint8_t)(o & 0x0F);
+    }
 }
 
 LtkkDisplay::~LtkkDisplay() {
@@ -472,10 +505,15 @@ void LtkkDisplay::StyleLowBattery() {
 }
 
 // ------------------------------------------------------------------ màn hình chờ
+// 8 kiểu, mỗi kiểu có tuỳ chọn riêng (thời tiết / ngày tháng / giây / nền trơn) lưu trong NVS.
+// Chỉnh trực tiếp: Cài đặt -> "Màn hình chờ" mở bảng tuỳ chỉnh ở mép dưới, màn hình
+// chờ phía trên đổi ngay để xem trước.
 void LtkkDisplay::CreateStandby() {
     standby_ = Box(lv_screen_active());
     lv_obj_set_size(standby_, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(standby_, lv_color_hex(LTKK_COLOR_NAVY), 0);
+    lv_obj_set_style_bg_grad_color(standby_, lv_color_hex(0x050E26), 0);
+    lv_obj_set_style_bg_grad_dir(standby_, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_opa(standby_, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_image_src(standby_, &ltkk_background, 0);
 
@@ -488,6 +526,10 @@ void LtkkDisplay::CreateStandby() {
     CreateStyleAnalog(style_panels_[1]);
     CreateStyleSleepy(style_panels_[2]);
     CreateStyleCard(style_panels_[3]);
+    CreateStyleCompanion(style_panels_[4]);
+    CreateStyleWeather(style_panels_[5]);
+    CreateStyleCalendar(style_panels_[6]);
+    CreateStyleNight(style_panels_[7]);
     CreateTimer(standby_);
     CreateMusic(standby_);
 
@@ -517,14 +559,15 @@ void LtkkDisplay::CreateStandby() {
     lv_obj_center(Image(gear_btn_, &ltkk_icon_gear_btn));
 
     // Thanh màu thương hiệu ở mép dưới
-    lv_obj_t* bar = Box(standby_);
-    lv_obj_set_size(bar, LV_PCT(100), 3);
-    lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(LTKK_COLOR_BLUE), 0);
-    lv_obj_set_style_bg_grad_color(bar, lv_color_hex(LTKK_COLOR_ORANGE), 0);
-    lv_obj_set_style_bg_grad_dir(bar, LV_GRAD_DIR_HOR, 0);
+    brand_bar_ = Box(standby_);
+    lv_obj_set_size(brand_bar_, LV_PCT(100), 3);
+    lv_obj_align(brand_bar_, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_opa(brand_bar_, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(brand_bar_, lv_color_hex(LTKK_COLOR_BLUE), 0);
+    lv_obj_set_style_bg_grad_color(brand_bar_, lv_color_hex(LTKK_COLOR_ORANGE), 0);
+    lv_obj_set_style_bg_grad_dir(brand_bar_, LV_GRAD_DIR_HOR, 0);
 
+    CreateStandbyEditor();
     PlaceUnderChrome(standby_);
     SetHidden(standby_, true);
 }
@@ -538,33 +581,87 @@ lv_obj_t* LtkkDisplay::CreateDigits(lv_obj_t* parent, lv_obj_t** slots, float sc
     return row;
 }
 
-// centered = thứ và ngày cùng một dòng (kiểu căn giữa); false = xếp 2 dòng (cột bên phải)
-void LtkkDisplay::CreateInfo(lv_obj_t* parent, InfoWidgets& info, bool centered) {
-    lv_obj_t* date_row = centered ? Row(parent, 6) : Column(parent, 2);
-    info.weekday = Image(date_row, kWeekdays[0]);
-    info.date = Label(date_row, kSoft);
+// Viên "kính mờ": nền trắng trong suốt, viền mảnh, bo tròn
+namespace {
+lv_obj_t* Pill(lv_obj_t* parent, int gap) {
+    lv_obj_t* p = Row(parent, gap);
+    lv_obj_set_style_bg_color(p, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(p, 30, 0);
+    lv_obj_set_style_border_width(p, 1, 0);
+    lv_obj_set_style_border_color(p, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_border_opa(p, 46, 0);
+    lv_obj_set_style_radius(p, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_hor(p, 10, 0);
+    lv_obj_set_style_pad_ver(p, 3, 0);
+    return p;
+}
+}  // namespace
 
-    info.weather = Row(parent, 5);
-    lv_obj_set_style_bg_color(info.weather, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_bg_opa(info.weather, 26, 0);
-    lv_obj_set_style_radius(info.weather, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_pad_hor(info.weather, 9, 0);
-    lv_obj_set_style_pad_ver(info.weather, 3, 0);
-    lv_obj_set_style_margin_top(info.weather, 4, 0);
-    Image(info.weather, &ltkk_icon_cloud);
-    info.weather_img = Image(info.weather, kWeather[1]);
+namespace {
+lv_obj_t* SecondsBar(lv_obj_t* parent, int width) {
+    lv_obj_t* bar = lv_bar_create(parent);
+    lv_obj_set_size(bar, width, 4);
+    lv_bar_set_range(bar, 0, 59);
+    lv_obj_set_style_radius(bar, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(bar, 2, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(kTrack), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(LTKK_COLOR_BLUE), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_grad_color(bar, lv_color_hex(LTKK_COLOR_ORANGE), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_grad_dir(bar, LV_GRAD_DIR_HOR, LV_PART_INDICATOR);
+    lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+    return bar;
+}
+}  // namespace
+
+namespace {
+void StartBreathe(lv_obj_t* obj, int duration) {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, obj);
+    lv_anim_set_exec_cb(&a, BreatheExec);
+    lv_anim_set_values(&a, 0, 16);
+    lv_anim_set_duration(&a, duration);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_start(&a);
+}
+}  // namespace
+
+// centered = các viên thông tin xếp ngang (kiểu căn giữa); false = xếp dọc (cột bên phải)
+lv_obj_t* LtkkDisplay::CreateInfo(lv_obj_t* parent, InfoWidgets& info, bool centered) {
+    lv_obj_t* holder = centered ? Row(parent, 8) : Column(parent, 6);
+    lv_obj_set_style_margin_top(holder, centered ? 8 : 4, 0);
+    if (centered) {
+        info.date_box = Pill(holder, 8);
+    } else {
+        info.date_box = Column(holder, 1);
+    }
+    info.weekday = Image(info.date_box, kWeekdays[0]);
+    info.date = Label(info.date_box, kSoft);
+
+    info.compact = centered;
+    info.weather = Pill(holder, 5);
+    if (centered) {
+        // gọn: biểu tượng thời tiết nhỏ + nhiệt độ (vừa một hàng với viên ngày)
+        info.weather_img = ScaledImage(info.weather, kWeatherBig[1], 0.32f);
+    } else {
+        Image(info.weather, &ltkk_icon_cloud);
+        info.weather_img = Image(info.weather, kWeather[1]);
+    }
     info.weather_temp = Label(info.weather, 0xFFFFFF);
     Image(info.weather, &ltkk_txt_degc);
     SetHidden(info.weather, true);
+    return holder;
 }
 
-// Kiểu 0: Đồng hồ số lớn
+// Kiểu 0: Đồng hồ số lớn + thanh giây + viên ngày / thời tiết
 void LtkkDisplay::CreateStyleClock(lv_obj_t* panel) {
-    lv_obj_t* col = Column(panel, 4);
+    lv_obj_t* col = Column(panel, 6);
     lv_obj_set_width(col, LV_PCT(100));
     lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(col, LV_ALIGN_CENTER, 0, -12);
+    lv_obj_align(col, LV_ALIGN_CENTER, 0, -14);
     CreateDigits(col, clock_digits_[0], 1.0f);
+    sec_bars_[0] = SecondsBar(col, 236);
     CreateInfo(col, info_[0], true);
 }
 
@@ -573,10 +670,12 @@ void LtkkDisplay::CreateStyleAnalog(lv_obj_t* panel) {
     constexpr int kDial = 146;
     lv_obj_t* dial = Box(panel);
     lv_obj_set_size(dial, kDial, kDial);
-    lv_obj_align(dial, LV_ALIGN_LEFT_MID, 10, 6);
+    lv_obj_align(dial, LV_ALIGN_LEFT_MID, 10, 2);
     lv_obj_set_style_radius(dial, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(dial, lv_color_hex(0x081738), 0);
-    lv_obj_set_style_bg_opa(dial, 200, 0);
+    lv_obj_set_style_bg_color(dial, lv_color_hex(0x0B1F4D), 0);
+    lv_obj_set_style_bg_grad_color(dial, lv_color_hex(0x050E26), 0);
+    lv_obj_set_style_bg_grad_dir(dial, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(dial, 230, 0);
 
     lv_obj_t* ring = lv_arc_create(dial);
     lv_obj_set_size(ring, kDial, kDial);
@@ -623,7 +722,7 @@ void LtkkDisplay::CreateStyleAnalog(lv_obj_t* panel) {
     lv_obj_center(hub);
 
     lv_obj_t* right = Column(panel, 6);
-    lv_obj_align(right, LV_ALIGN_LEFT_MID, 170, 4);
+    lv_obj_align(right, LV_ALIGN_LEFT_MID, 170, 0);
     CreateDigits(right, clock_digits_[1], 0.48f);
     CreateInfo(right, info_[1], false);
 }
@@ -647,18 +746,11 @@ void LtkkDisplay::UpdateAnalog(const struct tm& t) {
     set(analog_second_, 2, sec * M_PI / 30, 54);
 }
 
-// Kiểu 2: Lu ngủ - đôi mắt thở nhẹ, giờ nhỏ bên dưới
+// Kiểu 2: Lu ngủ - Lu thở nhẹ, giờ nhỏ bên dưới
 void LtkkDisplay::CreateStyleSleepy(lv_obj_t* panel) {
     sleepy_face_ = ScaledImage(panel, &ltkk_eyes_sleepy, 0.78f);
     lv_obj_align(sleepy_face_, LV_ALIGN_CENTER, 0, -50);
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, sleepy_face_);
-    lv_anim_set_exec_cb(&a, BreatheExec);
-    lv_anim_set_values(&a, 0, 16);
-    lv_anim_set_duration(&a, 3200);
-    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_start(&a);
+    StartBreathe(sleepy_face_, 3200);
 
     lv_obj_t* col = Column(panel, 4);
     lv_obj_set_width(col, LV_PCT(100));
@@ -666,18 +758,134 @@ void LtkkDisplay::CreateStyleSleepy(lv_obj_t* panel) {
     lv_obj_align(col, LV_ALIGN_CENTER, 0, 34);
     CreateDigits(col, clock_digits_[2], 0.5f);
     CreateInfo(col, info_[2], true);
-    SetHidden(info_[2].weather, true);
-    info_[2].weather = nullptr;  // kiểu Lu ngủ: gọn, không hiện thời tiết
 }
 
 // Kiểu 3: Thẻ LTKK - logo "Học để làm" + giờ
 void LtkkDisplay::CreateStyleCard(lv_obj_t* panel) {
     lv_obj_t* logo = ScaledImage(panel, &ltkk_splash_image, 0.62f);
-    lv_obj_align(logo, LV_ALIGN_LEFT_MID, 8, 4);
+    lv_obj_align(logo, LV_ALIGN_LEFT_MID, 8, 0);
     lv_obj_t* right = Column(panel, 6);
-    lv_obj_align(right, LV_ALIGN_LEFT_MID, 156, 4);
+    lv_obj_align(right, LV_ALIGN_LEFT_MID, 156, 0);
     CreateDigits(right, clock_digits_[3], 0.55f);
     CreateInfo(right, info_[3], false);
+}
+
+// Kiểu 4: Lu & bạn - Lu thở nhẹ bên trái, lời chào theo buổi + giờ bên phải
+void LtkkDisplay::CreateStyleCompanion(lv_obj_t* panel) {
+    lv_obj_t* face = ScaledImage(panel, &ltkk_eyes_neutral, 0.8f);
+    lv_obj_align(face, LV_ALIGN_LEFT_MID, 2, -6);
+    StartBreathe(face, 2800);
+
+    lv_obj_t* right = Column(panel, 3);
+    lv_obj_align(right, LV_ALIGN_LEFT_MID, 144, -6);
+    greet_img_ = Image(right, kGreetings[0]);
+    lv_obj_t* digits = CreateDigits(right, clock_digits_[4], 0.52f);
+    lv_obj_set_style_margin_top(digits, 4, 0);
+    CreateInfo(right, info_[4], false);
+}
+
+// Kiểu 5: Thời tiết - thẻ kính lớn: biểu tượng, nhiệt độ, thành phố; giờ + ngày bên dưới
+void LtkkDisplay::CreateStyleWeather(lv_obj_t* panel) {
+    lv_obj_t* card = Box(panel);
+    lv_obj_set_size(card, 296, 124);
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_style_radius(card, 22, 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(card, 26, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_border_opa(card, 56, 0);
+
+    wx_content_ = Box(card);
+    lv_obj_set_size(wx_content_, LV_PCT(100), LV_PCT(100));
+    wx_big_img_ = Image(wx_content_, &ltkk_wxbig_1);
+    lv_obj_align(wx_big_img_, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_t* col = Column(wx_content_, 2);
+    lv_obj_align(col, LV_ALIGN_LEFT_MID, 104, 0);
+    lv_obj_t* temp_row = Row(col, 0);
+    lv_obj_set_flex_align(temp_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    wx_temp_digits_[0] = ScaledImage(temp_row, &ltkk_digit_2, 0.66f);
+    wx_temp_digits_[1] = ScaledImage(temp_row, &ltkk_digit_7, 0.66f);
+    lv_obj_t* degc = Image(temp_row, &ltkk_txt_degc_big);
+    lv_obj_set_style_margin_left(degc, 4, 0);
+    wx_cond_img_ = Image(col, kWeather[1]);
+    wx_city_label_ = Label(col, kSoft);
+    lv_obj_set_width(wx_city_label_, 180);
+    lv_label_set_long_mode(wx_city_label_, LV_LABEL_LONG_MODE_DOTS);
+
+    wx_wait_img_ = Image(card, &ltkk_txt_wx_wait);
+    lv_obj_center(wx_wait_img_);
+    SetHidden(wx_wait_img_, true);
+
+    lv_obj_t* row = Row(panel, 10);
+    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 164);
+    CreateDigits(row, clock_digits_[5], 0.36f);
+    lv_obj_t* holder = CreateInfo(row, info_[5], true);
+    lv_obj_set_style_margin_top(holder, 0, 0);
+    SetHidden(info_[5].weather, true);
+    info_[5].weather = nullptr;  // thời tiết đã ở thẻ lớn
+}
+
+// Kiểu 6: Lịch - tờ lịch (tháng, ngày, thứ) + giờ bên phải
+void LtkkDisplay::CreateStyleCalendar(lv_obj_t* panel) {
+    lv_obj_t* card = Box(panel);
+    lv_obj_set_size(card, 124, 142);
+    lv_obj_align(card, LV_ALIGN_LEFT_MID, 16, -2);
+    lv_obj_set_style_radius(card, 18, 0);
+    lv_obj_set_style_clip_corner(card, true, 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(kTile), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(card, 2, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(kCyan), 0);
+    lv_obj_set_style_border_opa(card, 90, 0);
+
+    lv_obj_t* band = Box(card);
+    lv_obj_set_size(band, LV_PCT(100), 32);
+    lv_obj_align(band, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(band, lv_color_hex(LTKK_COLOR_ORANGE), 0);
+    lv_obj_set_style_bg_grad_color(band, lv_color_hex(0xFF9A3D), 0);
+    lv_obj_set_style_bg_grad_dir(band, LV_GRAD_DIR_HOR, 0);
+    lv_obj_t* head = Row(band, 6);
+    lv_obj_center(head);
+    Image(head, &ltkk_txt_month);
+    cal_month_label_ = Label(head, 0xFFFFFF);
+
+    lv_obj_t* day = Row(card, 0);
+    lv_obj_align(day, LV_ALIGN_CENTER, 0, 8);
+    cal_day_[0] = ScaledImage(day, &ltkk_digit_0, 0.72f);
+    cal_day_[1] = ScaledImage(day, &ltkk_digit_8, 0.72f);
+    cal_wday_img_ = Image(card, kWeekdays[0]);
+    lv_obj_align(cal_wday_img_, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    lv_obj_t* right = Column(panel, 6);
+    lv_obj_align(right, LV_ALIGN_LEFT_MID, 156, -2);
+    CreateDigits(right, clock_digits_[6], 0.5f);
+    CreateInfo(right, info_[6], false);
+    SetHidden(info_[6].weekday, true);  // thứ đã có trên tờ lịch
+}
+
+// Kiểu 7: Ban đêm - nền đen, chữ số xanh dịu, rất ít chi tiết (đỡ chói khi ngủ)
+void LtkkDisplay::CreateStyleNight(lv_obj_t* panel) {
+    lv_obj_t* black = Box(panel);
+    lv_obj_set_size(black, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(black, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(black, LV_OPA_COVER, 0);
+
+    lv_obj_t* col = Column(panel, 6);
+    lv_obj_set_width(col, LV_PCT(100));
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(col, LV_ALIGN_CENTER, 0, -4);
+    lv_obj_t* digits = CreateDigits(col, clock_digits_[7], 0.82f);
+    for (lv_obj_t* d : clock_digits_[7]) {
+        lv_obj_set_style_image_recolor(d, lv_color_hex(kCyan), 0);
+        lv_obj_set_style_image_recolor_opa(d, 110, 0);
+    }
+    lv_obj_set_style_opa(digits, 150, 0);
+    sec_bars_[7] = SecondsBar(col, 150);
+    lv_obj_set_style_opa(sec_bars_[7], 120, 0);
+    lv_obj_t* info = CreateInfo(col, info_[7], true);
+    lv_obj_set_style_opa(info, 120, 0);
 }
 
 void LtkkDisplay::SetDigits(lv_obj_t* const* slots, int a, int b) {
@@ -697,15 +905,55 @@ void LtkkDisplay::SetStandbyStyle(int style) {
     settings.SetInt("standby", style);
 }
 
+uint8_t LtkkDisplay::GetStandbyOptions(int style) const {
+    return (style >= 0 && style < kStandbyStyles) ? standby_opts_[style].load() : 0;
+}
+
+void LtkkDisplay::SetStandbyOptions(int style, uint8_t opts) {
+    if (style < 0 || style >= kStandbyStyles) {
+        return;
+    }
+    standby_opts_[style] = opts;
+    opts_dirty_ = true;
+    Settings settings("ltkk", true);
+    settings.SetInt("sbopt" + std::to_string(style), opts);
+}
+
+void LtkkDisplay::OpenStandbyEditor() { editor_request_ = true; }
+
+// Áp dụng tuỳ chọn hiển thị cho kiểu đang hiện
+void LtkkDisplay::ApplyStandbyOptions(int style) {
+    uint8_t o = standby_opts_[style].load();
+    InfoWidgets& info = info_[style];
+    SetHidden(info.date_box, !(o & kOptDate));
+    if (!(o & kOptWeather)) {
+        SetHidden(info.weather, true);
+    }
+    SetHidden(sec_bars_[style], !(o & kOptSeconds));
+    if (style == 1) {
+        SetHidden(analog_second_, !(o & kOptSeconds));
+    }
+    if (clock_digits_[style][2] != nullptr) {
+        lv_obj_set_style_opa(clock_digits_[style][2], LV_OPA_COVER, 0);
+    }
+    bool plain = (o & kOptPlain) != 0;
+    lv_obj_set_style_bg_image_src(standby_, plain ? nullptr : &ltkk_background, 0);
+    bool night = style == 7;
+    lv_obj_set_style_opa(gear_btn_, night ? 110 : LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(brand_bar_, night ? 60 : LV_OPA_COVER, 0);
+    last_weather_key_ = -1000;
+}
+
 void LtkkDisplay::ShowStandbyStyle(int style) {
+    bool dirty = opts_dirty_.exchange(false);
     for (int i = 0; i < kStandbyStyles; i++) {
         SetHidden(style_panels_[i], i != style);
     }
-    if (style != shown_style_) {
+    if (style != shown_style_ || dirty) {
         shown_style_ = style;
         last_minute_ = -1;
         last_second_ = -1;
-        last_weather_key_ = -1000;
+        ApplyStandbyOptions(style);
         UpdateClock(true);
         UpdateWeather();
     }
@@ -723,40 +971,166 @@ void LtkkDisplay::UpdateClock(bool force) {
     }
     SetHidden(style_panels_[style], false);
 
-    if (style == 1 && (force || t.tm_sec != last_second_)) {
+    uint8_t o = standby_opts_[style].load();
+    bool seconds = (o & kOptSeconds) != 0;
+    if ((style == 1 || seconds) && (force || t.tm_sec != last_second_)) {
         last_second_ = t.tm_sec;
-        UpdateAnalog(t);
+        if (style == 1) {
+            UpdateAnalog(t);
+        }
+        if (sec_bars_[style] != nullptr) {
+            lv_bar_set_value(sec_bars_[style], t.tm_sec, LV_ANIM_OFF);
+        }
+        if (seconds && style != 1 && clock_digits_[style][2] != nullptr) {
+            // dấu ":" nhấp nháy theo giây
+            lv_obj_set_style_opa(clock_digits_[style][2], (t.tm_sec % 2) ? 70 : LV_OPA_COVER, 0);
+        }
     }
     int minute_key = t.tm_hour * 60 + t.tm_min;
     if (!force && minute_key == last_minute_) {
         return;
     }
     last_minute_ = minute_key;
+    int wday = t.tm_wday == 0 ? 6 : t.tm_wday - 1;
     SetDigits(clock_digits_[style], t.tm_hour, t.tm_min);
     InfoWidgets& info = info_[style];
-    lv_image_set_src(info.weekday, kWeekdays[t.tm_wday == 0 ? 6 : t.tm_wday - 1]);
-    lv_label_set_text_fmt(info.date, "%02d/%02d/%04d", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
+    lv_image_set_src(info.weekday, kWeekdays[wday]);
+    if (info.compact) {
+        lv_label_set_text_fmt(info.date, "%02d/%02d", t.tm_mday, t.tm_mon + 1);
+    } else {
+        lv_label_set_text_fmt(info.date, "%02d/%02d/%04d", t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
+    }
+
+    if (style == 4 && greet_img_ != nullptr) {
+        int h = t.tm_hour;
+        int g = (h >= 5 && h < 11) ? 0 : (h < 13 && h >= 11) ? 1 : (h >= 13 && h < 18) ? 2
+                : (h >= 18 && h < 22) ? 3 : 4;
+        lv_image_set_src(greet_img_, kGreetings[g]);
+    }
+    if (style == 6 && cal_month_label_ != nullptr) {
+        lv_label_set_text_fmt(cal_month_label_, "%d", t.tm_mon + 1);
+        lv_image_set_src(cal_day_[0], kDigits[t.tm_mday / 10]);
+        lv_image_set_src(cal_day_[1], kDigits[t.tm_mday % 10]);
+        lv_image_set_src(cal_wday_img_, kWeekdays[wday]);
+    }
 }
 
 void LtkkDisplay::UpdateWeather() {
     auto& weather = LtkkWeather::GetInstance();
-    InfoWidgets& info = info_[shown_style_ < 0 ? 0 : shown_style_];
+    int style = shown_style_ < 0 ? 0 : shown_style_;
+    bool valid = weather.valid();
+    int cond = weather.condition();
+    cond = (cond >= 0 && cond < 6) ? cond : 1;
+    int temp = weather.temperature();
+    int key = valid ? cond * 1000 + temp : -999;
+    bool changed = key != last_weather_key_;
+    last_weather_key_ = key;
+
+    if (style == 5 && wx_content_ != nullptr) {
+        SetHidden(wx_content_, !valid);
+        SetHidden(wx_wait_img_, valid);
+        if (valid && changed) {
+            int a = temp < 0 ? -temp : temp;
+            lv_image_set_src(wx_big_img_, kWeatherBig[cond]);
+            lv_image_set_src(wx_temp_digits_[0], kDigits[(a / 10) % 10]);
+            lv_image_set_src(wx_temp_digits_[1], kDigits[a % 10]);
+            SetHidden(wx_temp_digits_[0], a < 10);
+            lv_image_set_src(wx_cond_img_, kWeather[cond]);
+            std::string city = weather.GetCity();
+            lv_label_set_text(wx_city_label_, city.c_str());
+        }
+    }
+
+    InfoWidgets& info = info_[style];
     if (info.weather == nullptr) {
         return;
     }
-    if (!weather.valid()) {
+    if (!valid || !(standby_opts_[style].load() & kOptWeather)) {
         SetHidden(info.weather, true);
         return;
     }
-    int cond = weather.condition();
-    int temp = weather.temperature();
-    int key = cond * 1000 + temp;
-    if (key != last_weather_key_) {
-        last_weather_key_ = key;
-        lv_image_set_src(info.weather_img, kWeather[cond >= 0 && cond < 6 ? cond : 1]);
+    if (changed) {
+        lv_image_set_src(info.weather_img, info.compact ? kWeatherBig[cond] : kWeather[cond]);
         lv_label_set_text_fmt(info.weather_temp, "%d", temp);
     }
     SetHidden(info.weather, false);
+}
+
+// ----- bảng tuỳ chỉnh màn hình chờ (mép dưới, xem trước trực tiếp)
+void LtkkDisplay::CreateStandbyEditor() {
+    editor_ = Box(standby_);
+    lv_obj_set_size(editor_, LV_PCT(100), 100);
+    lv_obj_align(editor_, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(editor_, lv_color_hex(0x081738), 0);
+    lv_obj_set_style_bg_opa(editor_, 245, 0);
+    lv_obj_set_style_radius(editor_, 18, 0);
+    lv_obj_set_style_border_side(editor_, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_width(editor_, 2, 0);
+    lv_obj_set_style_border_color(editor_, lv_color_hex(kCyan), 0);
+    lv_obj_set_style_border_opa(editor_, 140, 0);
+    MakeInteractive(editor_);  // chạm vùng trống của bảng: không gọi Lu
+
+    ed_prev_ = MakeButton(editor_, 40, 34, kTile, false);
+    lv_obj_align(ed_prev_, LV_ALIGN_TOP_LEFT, 10, 10);
+    lv_obj_center(Image(ed_prev_, &ltkk_icon_prev));
+    lv_obj_t* name_box = Box(editor_);
+    lv_obj_set_size(name_box, 138, 34);
+    lv_obj_align(name_box, LV_ALIGN_TOP_LEFT, 54, 10);
+    ed_name_ = Image(name_box, kStyleBig[0]);
+    lv_obj_center(ed_name_);
+    ed_next_ = MakeButton(editor_, 40, 34, kTile, false);
+    lv_obj_align(ed_next_, LV_ALIGN_TOP_LEFT, 196, 10);
+    lv_obj_center(Image(ed_next_, &ltkk_icon_next));
+    ed_done_ = MakeButton(editor_, 66, 34, LTKK_COLOR_ORANGE, false);
+    lv_obj_align(ed_done_, LV_ALIGN_TOP_RIGHT, -10, 10);
+    lv_obj_center(Image(ed_done_, &ltkk_txt_done));
+
+    static const lv_image_dsc_t* const kChipText[4] = {&ltkk_chip_0, &ltkk_chip_1, &ltkk_chip_2,
+                                                       &ltkk_chip_3};
+    for (int i = 0; i < 4; i++) {
+        ed_chips_[i] = MakeButton(editor_, 72, 36, kTile, false);
+        lv_obj_set_style_radius(ed_chips_[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_align(ed_chips_[i], LV_ALIGN_TOP_LEFT, 10 + i * 76, 54);
+        lv_obj_center(Image(ed_chips_[i], kChipText[i]));
+    }
+    SetHidden(editor_, true);
+}
+
+void LtkkDisplay::ShowStandbyEditor(bool show) {
+    if (editor_ == nullptr) {
+        return;
+    }
+    if (show) {
+        settings_last_ms_ = lv_tick_get();
+        editor_key_ = -1;
+        RefreshStandbyEditor();
+    }
+    SetHidden(editor_, !show);
+}
+
+void LtkkDisplay::RefreshStandbyEditor() {
+    int style = standby_style_.load();
+    uint8_t o = standby_opts_[style].load();
+    int key = style * 256 + o;
+    if (key == editor_key_) {
+        return;
+    }
+    editor_key_ = key;
+    lv_image_set_src(ed_name_, kStyleBig[style]);
+    static const uint8_t kBits[4] = {kOptWeather, kOptDate, kOptSeconds, kOptPlain};
+    for (int i = 0; i < 4; i++) {
+        bool on = (o & kBits[i]) != 0;
+        lv_obj_set_style_bg_color(ed_chips_[i], lv_color_hex(on ? LTKK_COLOR_ORANGE : kTile), 0);
+        lv_obj_set_style_border_width(ed_chips_[i], on ? 0 : 1, 0);
+        lv_obj_set_style_border_color(ed_chips_[i], lv_color_hex(kCyan), 0);
+        lv_obj_set_style_border_opa(ed_chips_[i], 120, 0);
+    }
+}
+
+void LtkkDisplay::ToggleStandbyOption(int chip) {
+    static const uint8_t kBits[4] = {kOptWeather, kOptDate, kOptSeconds, kOptPlain};
+    int style = standby_style_.load();
+    SetStandbyOptions(style, standby_opts_[style].load() ^ kBits[chip]);
 }
 
 // ------------------------------------------------------------------ hẹn giờ
@@ -878,35 +1252,79 @@ void LtkkDisplay::UpdateTimer(int64_t now_us) {
 }
 
 // ------------------------------------------------------------------ nhạc / radio
+// Ảnh bìa (YouTube: ảnh thu nhỏ của video do Lu Manager gửi) + tên bài chạy chữ + ca sĩ
+// + sóng nhạc nhảy theo nhịp + thanh tiến trình + nút điều khiển.
 void LtkkDisplay::CreateMusic(lv_obj_t* parent) {
     music_panel_ = Box(parent);
     lv_obj_set_size(music_panel_, LV_PCT(100), LV_PCT(100));
 
     lv_obj_t* art = Box(music_panel_);
-    lv_obj_set_size(art, 96, 96);
-    lv_obj_align(art, LV_ALIGN_TOP_LEFT, 16, 38);
+    lv_obj_set_size(art, 112, 112);
+    lv_obj_align(art, LV_ALIGN_TOP_LEFT, 14, 34);
     lv_obj_set_style_radius(art, 18, 0);
+    lv_obj_set_style_clip_corner(art, true, 0);
     lv_obj_set_style_bg_opa(art, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(art, lv_color_hex(LTKK_COLOR_BLUE), 0);
     lv_obj_set_style_bg_grad_color(art, lv_color_hex(LTKK_COLOR_ORANGE), 0);
     lv_obj_set_style_bg_grad_dir(art, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_border_width(art, 2, 0);
+    lv_obj_set_style_border_color(art, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_border_opa(art, 70, 0);
     music_art_icon_ = Image(art, &ltkk_icon_note);
     lv_obj_center(music_art_icon_);
+    music_cover_ = lv_image_create(art);
+    lv_obj_remove_flag(music_cover_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(music_cover_);
+    SetHidden(music_cover_, true);
+    cover_buf_ = static_cast<uint8_t*>(
+        heap_caps_malloc(LtkkMusic::kCoverBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (cover_buf_ == nullptr) {
+        cover_buf_ = static_cast<uint8_t*>(heap_caps_malloc(LtkkMusic::kCoverBytes, MALLOC_CAP_8BIT));
+    }
+    cover_dsc_.header.magic = LV_IMAGE_HEADER_MAGIC;
+    cover_dsc_.header.cf = LV_COLOR_FORMAT_RGB565;
+    cover_dsc_.header.w = LtkkMusic::kCoverSize;
+    cover_dsc_.header.h = LtkkMusic::kCoverSize;
+    cover_dsc_.header.stride = LtkkMusic::kCoverSize * 2;
+    cover_dsc_.data_size = LtkkMusic::kCoverBytes;
+    cover_dsc_.data = cover_buf_;
 
-    lv_obj_t* info = Column(music_panel_, 6);
-    lv_obj_align(info, LV_ALIGN_TOP_LEFT, 126, 46);
+    lv_obj_t* info = Column(music_panel_, 4);
+    lv_obj_align(info, LV_ALIGN_TOP_LEFT, 138, 36);
     music_kind_img_ = Image(info, &ltkk_txt_music);
     music_title_ = Label(info, 0xFFFFFF);
-    lv_obj_set_width(music_title_, 180);
-    lv_label_set_long_mode(music_title_, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_width(music_title_, 170);
+    lv_label_set_long_mode(music_title_, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    music_artist_ = Label(info, kSoft);
+    lv_obj_set_width(music_artist_, 170);
+    lv_label_set_long_mode(music_artist_, LV_LABEL_LONG_MODE_DOTS);
+    SetHidden(music_artist_, true);
     music_sub_img_ = Image(info, &ltkk_txt_sdcard);
-    music_bar_ = lv_bar_create(info);
-    lv_obj_set_size(music_bar_, 180, 6);
+
+    // sóng nhạc: 6 vạch nhảy lệch nhịp
+    music_eq_ = Row(info, 3);
+    lv_obj_set_height(music_eq_, 20);
+    lv_obj_set_flex_align(music_eq_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    lv_obj_set_style_margin_top(music_eq_, 4, 0);
+    for (int i = 0; i < kEqBars; i++) {
+        lv_obj_t* bar = Box(music_eq_);
+        lv_obj_set_size(bar, 4, 4);
+        lv_obj_set_style_radius(bar, 2, 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(i % 2 ? kCyan : LTKK_COLOR_ORANGE), 0);
+        music_eq_bars_[i] = bar;
+    }
+
+    music_bar_ = lv_bar_create(music_panel_);
+    lv_obj_set_size(music_bar_, 292, 5);
+    lv_obj_align(music_bar_, LV_ALIGN_TOP_LEFT, 14, 156);
     lv_bar_set_range(music_bar_, 0, 1000);
+    lv_obj_remove_flag(music_bar_, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(music_bar_, lv_color_hex(kTrack), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(music_bar_, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(music_bar_, lv_color_hex(LTKK_COLOR_ORANGE), LV_PART_INDICATOR);
-    lv_obj_set_style_margin_top(music_bar_, 6, 0);
+    lv_obj_set_style_bg_color(music_bar_, lv_color_hex(LTKK_COLOR_BLUE), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_grad_color(music_bar_, lv_color_hex(LTKK_COLOR_ORANGE), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_grad_dir(music_bar_, LV_GRAD_DIR_HOR, LV_PART_INDICATOR);
 
     lv_obj_t* controls = Row(music_panel_, 18);
     lv_obj_align(controls, LV_ALIGN_BOTTOM_MID, -24, -12);
@@ -925,21 +1343,47 @@ void LtkkDisplay::CreateMusic(lv_obj_t* parent) {
     SetHidden(music_panel_, true);
 }
 
+void LtkkDisplay::SetEqualizer(bool running) {
+    if (running == eq_running_) {
+        return;
+    }
+    eq_running_ = running;
+    for (int i = 0; i < kEqBars; i++) {
+        lv_obj_t* bar = music_eq_bars_[i];
+        lv_anim_delete(bar, EqExec);
+        if (!running) {
+            lv_obj_set_height(bar, 4);
+            continue;
+        }
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, bar);
+        lv_anim_set_exec_cb(&a, EqExec);
+        lv_anim_set_values(&a, 0, 32);
+        lv_anim_set_duration(&a, 420 + i * 97 % 260);
+        lv_anim_set_delay(&a, i * 70);
+        lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_start(&a);
+    }
+}
+
 void LtkkDisplay::UpdateMusic() {
     auto& music = LtkkMusic::GetInstance();
-    // 0 = thẻ nhớ, 1 = radio, 2 = bài hát trực tuyến; +10 khi đang kết nối
-    int mode = music.IsRadio() ? 1 : (music.IsSong() ? 2 : (music.IsSpeaker() ? 3 : 0));
+    // 0 = thẻ nhớ, 1 = radio, 2 = bài hát trực tuyến, 3 = loa máy tính, 4 = YouTube
+    int mode = music.IsRadio() ? 1 : (music.IsSong() ? (music.IsYoutube() ? 4 : 2) : (music.IsSpeaker() ? 3 : 0));
     int key = mode + (music.IsBuffering() ? 10 : 0);
     if (key != music_mode_shown_) {
         music_mode_shown_ = key;
         lv_image_set_src(music_kind_img_, mode == 0   ? &ltkk_txt_music
                                           : mode == 1 ? &ltkk_txt_radio
                                           : mode == 2 ? &ltkk_txt_online
+                                          : mode == 4 ? &ltkk_txt_youtube
                                                       : &ltkk_txt_speaker);
         lv_image_set_src(music_sub_img_, music.IsBuffering() ? &ltkk_txt_connecting
                                          : mode == 0         ? &ltkk_txt_sdcard
                                          : mode == 1         ? &ltkk_txt_live
                                          : mode == 2         ? &ltkk_txt_server
+                                         : mode == 4         ? &ltkk_txt_youtube_sub
                                                              : &ltkk_txt_speaker_sub);
         lv_image_set_src(music_art_icon_, mode == 1 ? &ltkk_icon_radio : &ltkk_icon_note);
         lv_image_set_scale(music_art_icon_, mode == 1 ? 420 : 256);
@@ -949,12 +1393,35 @@ void LtkkDisplay::UpdateMusic() {
         music_title_text_ = title;
         lv_label_set_text(music_title_, title.c_str());
     }
+    std::string artist = music.CurrentArtist();
+    if (artist != music_artist_text_) {
+        music_artist_text_ = artist;
+        lv_label_set_text(music_artist_, artist.c_str());
+        SetHidden(music_artist_, artist.empty());
+    }
+    SetHidden(music_sub_img_, !artist.empty() && !music.IsBuffering());
+
+    // Ảnh bìa: chép sang bộ nhớ riêng của màn hình rồi hiển thị
+    int version = music.CoverVersion();
+    if (version != cover_version_shown_) {
+        cover_version_shown_ = version;
+        bool has = cover_buf_ != nullptr && music.CopyCover(cover_buf_, LtkkMusic::kCoverBytes);
+        lv_image_cache_drop(&cover_dsc_);
+        if (has) {
+            lv_image_set_src(music_cover_, &cover_dsc_);
+            lv_obj_invalidate(music_cover_);
+        }
+        SetHidden(music_cover_, !has);
+        SetHidden(music_art_icon_, has);
+    }
+
     lv_bar_set_value(music_bar_, mode == 0 ? music.ProgressPermille() : 1000, LV_ANIM_OFF);
     bool paused = music.IsPaused();
     if (paused != music_paused_shown_) {
         music_paused_shown_ = paused;
         lv_image_set_src(music_play_img_, paused ? &ltkk_icon_play : &ltkk_icon_pause);
     }
+    SetEqualizer(!paused && !music.IsBuffering());
 }
 
 // ------------------------------------------------------------------ cài Wi-Fi
@@ -1367,6 +1834,10 @@ bool LtkkDisplay::HandleSwipe(Swipe dir) {
         demo_request_ = true;
     } else if ((dir == kSwipeLeft || dir == kSwipeRight) && !settings_open && !IsHidden(standby_)) {
         SetStandbyStyle(standby_style_.load() + (dir == kSwipeLeft ? 1 : -1));
+        if (!IsHidden(editor_)) {
+            settings_last_ms_ = lv_tick_get();
+            RefreshStandbyEditor();
+        }
     } else {
         return settings_open;  // đang mở cài đặt: nuốt mọi thao tác
     }
@@ -1396,8 +1867,20 @@ void LtkkDisplay::OnClick(lv_obj_t* t) {
             SetTheme(theme);
         }
     } else if (t == set_style_tile_) {
-        SetStandbyStyle(standby_style_.load() + 1);
-        RefreshSettings();
+        OpenSettings(false);
+        ShowStandbyEditor(true);
+    } else if (t == ed_prev_ || t == ed_next_) {
+        SetStandbyStyle(standby_style_.load() + (t == ed_next_ ? 1 : -1));
+        RefreshStandbyEditor();
+    } else if (t == ed_done_) {
+        ShowStandbyEditor(false);
+    } else if (t == ed_chips_[0] || t == ed_chips_[1] || t == ed_chips_[2] || t == ed_chips_[3]) {
+        for (int i = 0; i < 4; i++) {
+            if (t == ed_chips_[i]) {
+                ToggleStandbyOption(i);
+            }
+        }
+        RefreshStandbyEditor();
     } else if (t == set_media_tile_) {
         if (music.IsActive() || music.IsPending()) {
             music.Stop();
@@ -1511,7 +1994,10 @@ void LtkkDisplay::OnTick() {
         bool show_clock = !show_music && !show_timer;
         SetHidden(music_panel_, !show_music);
         SetHidden(timer_panel_, !show_timer);
-        SetHidden(hint_pill_, !show_clock);
+        SetHidden(hint_pill_, !show_clock || standby_style_.load() == 7 || !IsHidden(editor_));
+        if (!show_music) {
+            SetEqualizer(false);
+        }
         if (show_clock) {
             ShowStandbyStyle(standby_style_.load());
             UpdateClock(false);
@@ -1532,6 +2018,32 @@ void LtkkDisplay::OnTick() {
         }
     } else if (state_changed) {
         SetHidden(standby_, true);
+        ShowStandbyEditor(false);
+    }
+
+    // Thanh trên cùng: màn hình chờ đã có đồng hồ lớn -> ẩn giờ nhỏ ở thanh trên
+    bool standby_on = !IsHidden(standby_);
+    if (status_label_ != nullptr && standby_on != status_hidden_) {
+        status_hidden_ = standby_on;
+        lv_obj_set_style_opa(status_label_, standby_on ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    }
+    bool night = standby_on && standby_style_.load() == 7;
+    if (top_bar_ != nullptr && night != top_dimmed_) {
+        top_dimmed_ = night;
+        lv_obj_set_style_opa(top_bar_, night ? 90 : LV_OPA_COVER, 0);
+    }
+
+    // Bảng tuỳ chỉnh màn hình chờ
+    if (editor_request_.exchange(false) && idle) {
+        OpenSettings(false);
+        ShowStandbyEditor(true);
+    }
+    if (!IsHidden(editor_)) {
+        if (lv_tick_elaps(settings_last_ms_) > 30000) {
+            ShowStandbyEditor(false);
+        } else {
+            RefreshStandbyEditor();
+        }
     }
 
     // Khuôn mặt và sóng âm

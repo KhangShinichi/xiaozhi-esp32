@@ -67,3 +67,14 @@ Nạp file `build/merged-binary.bin` vào địa chỉ `0x0`.
 - Ở màn hình chờ, **vuốt lên**: Lu lần lượt hiện 12 cảm xúc kèm nhãn tiếng Việt (~2 giây mỗi mặt).
 - Hoặc nói: “Lu ơi, cho xem các cảm xúc” / “Lu ơi, làm mặt giận xem nào”.
 - Chạm màn hình hoặc gọi Lu để dừng.
+
+## Màn hình chờ (v8) - 8 kiểu
+Đồng hồ · Kim LTKK · Lu ngủ · Thẻ LTKK · Lu & bạn · Thời tiết · Lịch · Ban đêm.
+- Vuốt ngang để đổi kiểu. Thanh trên cùng không còn hiện giờ trùng với đồng hồ lớn.
+- Tuỳ chỉnh từng kiểu: Cài đặt → "Màn hình chờ" → bảng ở mép dưới: đổi kiểu (◀ ▶),
+  bật/tắt Thời tiết · Ngày tháng · Giây · Nền trơn (xem trước ngay phía trên).
+- Hoặc nói: "Lu ơi, đổi màn hình chờ sang kiểu lịch", "Lu ơi, tắt thời tiết trên màn hình chờ".
+
+## Màn hình nhạc
+Ảnh bìa + tên bài chạy chữ + ca sĩ/kênh + sóng nhạc. Khi phát qua YouTube (Lu Manager có
+YouTube API key), Lu hiện ảnh thu nhỏ và tên video; bài trong máy có ảnh bìa nhúng cũng hiện.

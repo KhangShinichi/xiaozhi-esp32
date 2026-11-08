@@ -55,6 +55,13 @@ public:
     bool IsBuffering() const { return buffering_.load(); }
     int ProgressPermille() const { return progress_.load(); }
     std::string CurrentTitle();
+    std::string CurrentArtist();            // ca sĩ / kênh (bài hát trực tuyến), có thể rỗng
+    bool IsYoutube() const { return youtube_.load(); }
+    // Ảnh bìa 112x112 RGB565 do máy chủ nhạc gửi (YouTube: ảnh thu nhỏ của video)
+    static constexpr int kCoverSize = 112;
+    static constexpr size_t kCoverBytes = kCoverSize * kCoverSize * 2;
+    int CoverVersion() const { return cover_version_.load(); }
+    bool CopyCover(uint8_t* dst, size_t size);
     std::vector<std::string> List();
     std::vector<std::string> RadioList();
     std::string LastError();
@@ -82,6 +89,11 @@ private:
     int station_ = 0;
     std::string custom_url_;
     std::string custom_name_;
+    std::string custom_artist_;
+    std::string cover_;
+    std::atomic<int> cover_version_{0};
+    std::atomic<bool> youtube_{false};
+    void SetCover(std::string data);
     std::string error_;
 
     TaskHandle_t task_ = nullptr;
