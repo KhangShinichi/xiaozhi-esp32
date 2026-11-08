@@ -25,10 +25,17 @@
 #define AUDIO_CODEC_ES8311_ADDR  ES8311_CODEC_DEFAULT_ADDR
 
 #define TOUCH_I2C_ADDR           0x38         // FT6336G
+// Hướng cảm ứng so với màn hình ngang 320x240. Nếu chạm bị lệch/ngược,
+// xem log "Touch raw=(..) screen=(..)" rồi đổi 0/1 ở 3 dòng dưới.
+#define TOUCH_SWAP_XY            1
+#define TOUCH_MIRROR_X           0
+#define TOUCH_MIRROR_Y           0
 
 // Nút BOOT và đèn LED RGB
 #define BOOT_BUTTON_GPIO GPIO_NUM_0
 #define BUILTIN_LED_GPIO GPIO_NUM_42
+
+// Thẻ nhớ microSD (SDIO 4-bit): CLK 38, CMD 40, D0 39, D1 41, D2 48, D3 47 - xem ltkk_music.cc
 
 // Màn hình ILI9341V 2.8 inch, SPI
 #define DISPLAY_BACKLIGHT_PIN GPIO_NUM_45

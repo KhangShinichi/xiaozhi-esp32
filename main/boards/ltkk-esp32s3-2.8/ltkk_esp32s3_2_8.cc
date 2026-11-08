@@ -28,6 +28,10 @@
 #include "esp_lcd_ili9341.h"
 #include "ltkk_brand.h"
 #include "ltkk_display.h"
+#include "ltkk_music.h"
+#include "ltkk_weather.h"
+#include <cJSON.h>
+#include <utility>
 
 #define TAG "LtkkEsp32S3"
 
@@ -78,6 +82,22 @@ private:
         adc_battery_monitor_ = new AdcBatteryMonitor(ADC_UNIT_1, ADC_CHANNEL_8, 200000, 200000, GPIO_NUM_NC);
     }
 
+    // Đổi toạ độ thô của FT6336G sang toạ độ màn hình (chỉnh trong config.h nếu bị lệch)
+    static void MapTouch(uint16_t rx, uint16_t ry, int &sx, int &sy) {
+        int x = rx, y = ry;
+#if TOUCH_SWAP_XY
+        std::swap(x, y);
+#endif
+#if TOUCH_MIRROR_X
+        x = DISPLAY_WIDTH - 1 - x;
+#endif
+#if TOUCH_MIRROR_Y
+        y = DISPLAY_HEIGHT - 1 - y;
+#endif
+        sx = x < 0 ? 0 : (x >= DISPLAY_WIDTH ? DISPLAY_WIDTH - 1 : x);
+        sy = y < 0 ? 0 : (y >= DISPLAY_HEIGHT ? DISPLAY_HEIGHT - 1 : y);
+    }
+
     static void TouchTask(void *arg) {
         auto *self = static_cast<LtkkEsp32S3Display*>(arg);
         auto &app = Application::GetInstance();
@@ -85,11 +105,23 @@ private:
         uint32_t last_tap = 0;
         uint32_t down_start = 0;
         bool down = false;
+        int logged = 0;
 
         while (true) {
             bool t;
             uint16_t x, y;
             self->touch_.Read(t, x, y);
+            int sx = 0, sy = 0;
+            if (t) {
+                MapTouch(x, y, sx, sy);
+                if (!down && logged < 20) {
+                    logged++;
+                    ESP_LOGI(TAG, "Touch raw=(%d,%d) screen=(%d,%d)", x, y, sx, sy);
+                }
+            }
+            if (self->display_ != nullptr) {
+                self->display_->FeedTouch(t, sx, sy);
+            }
 
             uint32_t now = esp_timer_get_time() / 1000;
 
@@ -102,26 +134,28 @@ private:
 
             if (!t && down) {
                 down = false;
-
                 uint32_t press = now - down_start;
 
-                // long tap
-                if (press > 3000) {
-                    self->EnterWifiConfigMode();
+                // Chờ giao diện xử lý xong lần chạm (nút, thanh trượt, vuốt)
+                vTaskDelay(pdMS_TO_TICKS(80));
+                bool consumed = self->display_ != nullptr && self->display_->TakeTouchConsumed();
+
+                if (consumed) {
+                    // giao diện LTKK đã xử lý
+                } else if (press > 3000) {
+                    self->EnterWifiConfigMode();      // giữ hơn 3 giây: cài Wi-Fi
+                } else if (press > 1000) {
+                    self->display_->ToggleQuickSettings();  // giữ 1-3 giây: cài đặt nhanh
+                } else if (now - last_tap < 250) {
+                    app.StartListening();             // chạm 2 lần
+                    last_tap = 0;
                 } else {
-                    // double tap
-                    if (now - last_tap < 250) {
-                        app.StartListening();
-                        last_tap = 0;
-                    } else {
-                        // single tap
-                        app.ToggleChatState();
-                        last_tap = now;
-                    }
+                    app.ToggleChatState();            // chạm 1 lần
+                    last_tap = now;
                 }
             }
 
-            vTaskDelay(pdMS_TO_TICKS(50));
+            vTaskDelay(pdMS_TO_TICKS(30));
         }
     }
 
@@ -234,6 +268,66 @@ private:
                 display_->CancelStudyTimer();
                 return true;
             });
+        mcp.AddTool("self.study_timer.pause_resume",
+            "Pause the running study timer, or resume it if it is paused.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                display_->PauseResumeStudyTimer();
+                return true;
+            });
+
+        // --- Nhạc từ thẻ nhớ microSD
+        mcp.AddTool("self.music.play",
+            "Play music (.ogg files) from the microSD card. Use when the user asks to play music "
+            "or a song. `name` is optional: part of the song title, empty for the next song. "
+            "Music starts after you finish speaking; keep your reply short.",
+            PropertyList({Property("name", kPropertyTypeString, std::string(""))}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& music = LtkkMusic::GetInstance();
+                if (!music.Play(properties["name"].value<std::string>())) {
+                    return std::unexpected(music.LastError());
+                }
+                return std::string("Playing: ") + music.CurrentTitle();
+            });
+        mcp.AddTool("self.music.stop", "Stop the music.", PropertyList(),
+            [](const PropertyList& properties) -> ReturnValue {
+                LtkkMusic::GetInstance().Stop();
+                return true;
+            });
+        mcp.AddTool("self.music.next", "Skip to the next song.", PropertyList(),
+            [](const PropertyList& properties) -> ReturnValue {
+                LtkkMusic::GetInstance().Next();
+                return true;
+            });
+        mcp.AddTool("self.music.list", "List the songs on the microSD card.", PropertyList(),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& music = LtkkMusic::GetInstance();
+                auto songs = music.List();
+                if (songs.empty()) {
+                    auto error = music.LastError();
+                    return std::unexpected(error.empty() ? std::string("No songs found") : error);
+                }
+                cJSON* arr = cJSON_CreateArray();
+                for (const auto& song : songs) {
+                    cJSON_AddItemToArray(arr, cJSON_CreateString(song.c_str()));
+                }
+                return arr;
+            });
+
+        // --- Thời tiết trên màn hình chờ
+        mcp.AddTool("self.weather.set_city",
+            "Set the city whose current weather is shown on the standby screen "
+            "(for example `Ha Noi`, `Da Nang`, `Ho Chi Minh`).",
+            PropertyList({Property("city", kPropertyTypeString)}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto city = properties["city"].value<std::string>();
+                if (!LtkkWeather::GetInstance().SetCity(city)) {
+                    return std::unexpected("Could not find weather for " + city);
+                }
+                auto& w = LtkkWeather::GetInstance();
+                return city + ": " + std::to_string(w.temperature()) + " C";
+            });
+
         mcp.AddTool("self.study_timer.get_remaining",
             "Get how many seconds are left on the study timer (0 if no timer is running).",
             PropertyList(),
@@ -253,6 +347,7 @@ public:
         InitializeTouch();
         InitializeButtons();
         InitializeTools();
+        LtkkWeather::GetInstance().Start();
         GetBacklight()->SetBrightness(100);
     }
 

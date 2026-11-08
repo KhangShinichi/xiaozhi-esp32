@@ -1,5 +1,9 @@
 name: LTKK - Build firmware
 
+# Tự build firmware Xiaozhi LTKK trên máy chủ GitHub, không cần cài gì trên máy.
+# Chạy tay: tab Actions -> "LTKK - Build firmware" -> Run workflow.
+# Tự chạy mỗi khi bạn sửa file trong thư mục board LTKK.
+
 on:
   workflow_dispatch:
   push:
@@ -16,16 +20,16 @@ jobs:
     container:
       image: espressif/idf:release-v6.1
     steps:
-      - name: Lay ma nguon
+      - name: Lấy mã nguồn
         uses: actions/checkout@v4
 
-      - name: Build firmware LTKK (tieng Viet)
+      - name: Build firmware LTKK (tiếng Việt)
         shell: bash
         run: |
           source "$IDF_PATH/export.sh"
           python scripts/build.py ltkk-esp32s3-2.8 --language vi-VN
 
-      - name: Tai firmware ve
+      - name: Tải firmware về
         uses: actions/upload-artifact@v4
         with:
           name: ltkk-xiaozhi-firmware
